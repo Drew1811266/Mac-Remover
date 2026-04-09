@@ -1,0 +1,34 @@
+# Mac Watermark Remover - Dependencies
+
+# Deep Learning Framework
+torch>=2.0.0
+torchvision>=0.15.0
+
+# Models
+simple-lama-inpainting>=0.1.0
+
+# Video Processing
+opencv-python>=4.8.0
+ffmpeg-python>=0.2.0
+imageio>=2.34.0
+imageio-ffmpeg>=0.5.1
+scipy>=1.10.0
+scikit-image>=0.21.0
+matplotlib>=3.7.0
+requests>=2.31.0
+PyYAML>=6.0.0
+addict>=2.4.0
+einops>=0.7.0
+timm>=0.9.12
+gdown>=5.2.0
+
+# GUI
+pywebview>=5.0.0
+pyobjc-framework-AVFoundation>=11.1; sys_platform == "darwin"
+pyobjc-framework-AVKit>=11.1; sys_platform == "darwin"
+
+# Utilities
+numpy>=1.24.0
+Pillow>=10.0.0
+tqdm>=4.66.0
+psutil>=5.9.0
