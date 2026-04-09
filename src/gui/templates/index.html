@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mac Watermark Remover</title>
+  <link href="https://vjs.zencdn.net/8.23.4/video-js.css" rel="stylesheet">
+  <link rel="stylesheet" href="static/css/style.css">
+  <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body x-data="app()" :class="{ 'dark': theme === 'dark' }" :theme-mode="theme">
+  <div class="app-container">
+    <header class="app-header">
+      <div class="app-title">
+        <span class="app-title-icon">🔲</span>
+        <span>Mac Watermark Remover</span>
+      </div>
+      <div class="app-header-actions">
+        <button class="theme-toggle" @click="toggleTheme()" :title="theme === 'dark' ? '切换到亮色模式' : '切换到暗色模式'">
+          <span x-show="theme === 'light'">🌙</span>
+          <span x-show="theme === 'dark'">☀️</span>
+        </button>
+      </div>
+    </header>
+
+    <div class="toolbar">
+      <div class="toolbar-group">
+        <button class="semi-button semi-button-secondary" @click="selectFile()">
+          📁 选择文件
+        </button>
+        <button class="semi-button semi-button-secondary" @click="selectFolder()">
+          📂 选择文件夹
+        </button>
+        <button class="semi-button semi-button-secondary" :disabled="!currentFile || mode === 'batch' || !currentIsVideo" @click="enterAnnotationWorkspace()">
+          🛠️ 进入打标工作台
+        </button>
+      </div>
+      <div class="toolbar-hint" x-text="mode === 'batch' ? '当前模式：批量处理（选择目录后将处理全部媒体）' : '当前模式：单文件处理（可拖拽文件到左侧）'"></div>
+    </div>
+
+    <main class="main-content" x-show="!showAnnotationWorkspace">
+      <div class="preview-section">
+        <div class="preview-container module-card">
+          <div class="preview-header">
+            <div class="preview-title-group">
+              <span class="preview-title">原始视频/图片</span>
+              <span class="preview-subtitle">用于水印检测和区域标注</span>
+            </div>
+            <div class="preview-meta">
+              <span class="semi-tag" x-show="currentFile" x-text="currentFile?.split('/').pop()"></span>
+              <span class="semi-tag" x-show="sourceMediaInfo.type === 'video' && sourceMediaInfo.fps > 0" x-text="'FPS ' + formatFps(sourceMediaInfo.fps)"></span>
+              <span class="semi-tag" x-show="sourceMediaInfo.width > 0" x-text="sourceMediaInfo.width + '×' + sourceMediaInfo.height"></span>
+              <div class="preview-inline-controls">
+                <button class="semi-button semi-button-tertiary semi-button-small" :disabled="!currentFile || mode === 'batch' || !currentIsVideo" @click="playSource()">▶️ 播放</button>
+                <button class="semi-button semi-button-tertiary semi-button-small" :disabled="!currentFile || mode === 'batch' || !currentIsVideo" @click="pauseSource()">⏸️ 暂停</button>
+              </div>
+            </div>
+          </div>
+          <div class="preview-content">
+            <template x-if="!currentFile || mode === 'batch'">
+              <div class="file-drop-zone"
+                   @click="selectFile()"
+                   @dragover.prevent="dragOver = true"
+                   @dragleave="dragOver = false"
+                    @drop.prevent="handleDrop($event)"
+                   :class="{ 'drag-over': dragOver }">
+                <span class="file-drop-zone-icon">📁</span>
+                <span class="file-drop-zone-text" x-text="mode === 'batch' ? '已选择文件夹，批量模式不支持预览' : '拖拽文件到此处或点击选择'"></span>
+                <span class="file-drop-zone-hint">支持 MP4, AVI, MOV, MKV, PNG, JPG 等格式</span>
+              </div>
+            </template>
+            <template x-if="currentFile && mode !== 'batch' && currentIsVideo && sourcePreviewMode === 'video'">
+              <video
+                class="preview-video video-js vjs-big-play-centered"
+                :src="previewUrl"
+                :key="previewUrl"
+                x-ref="sourceVideo"
+                preload="metadata"
+                controls
+                playsinline
+                @error="onSourceVideoError()"
+              ></video>
+            </template>
+            <template x-if="currentFile && mode !== 'batch' && currentIsVideo && sourcePreviewMode === 'frames'">
+              <img class="preview-image" :src="sourceFrameUrl || previewUrl" alt="Frame Preview">
+            </template>
+            <template x-if="currentFile && mode !== 'batch' && currentIsVideo && sourcePreviewMode === 'native'">
+              <div class="native-player-hint">
+                <span class="native-player-hint-icon">🎬</span>
+                <span>已启用高性能原生播放器窗口预览</span>
+                <span class="native-player-hint-sub">支持流畅播放与拖动进度条</span>
+              </div>
+            </template>
+            <template x-if="currentFile && mode !== 'batch' && !currentIsVideo">
+              <img class="preview-image" :src="previewUrl" alt="Preview">
+            </template>
+          </div>
+          <div class="preview-controls">
+            <button class="semi-button semi-button-tertiary semi-button-small" :disabled="!currentFile || mode === 'batch' || !currentIsVideo" @click="playSource()">▶️ 播放</button>
+            <button class="semi-button semi-button-tertiary semi-button-small" :disabled="!currentFile || mode === 'batch' || !currentIsVideo" @click="pauseSource()">⏸️ 暂停</button>
+            <button class="semi-button semi-button-tertiary semi-button-small" :disabled="!currentFile || mode === 'batch' || !currentIsVideo" x-show="sourcePreviewMode === 'native'" @click="focusSourceNativePlayer()">🪟 打开播放器</button>
+            <input
+              class="preview-slider"
+              type="range"
+              min="0"
+              :max="Math.max(0, sourceNativeDuration)"
+              :value="sourceNativePosition"
+              step="0.01"
+              @input="seekSourceNative($event.target.value)"
+              x-show="sourcePreviewMode === 'native'"
+            >
+            <span class="preview-slider-text" x-show="sourcePreviewMode === 'native'" x-text="formatDuration(sourceNativePosition) + ' / ' + formatDuration(sourceNativeDuration)"></span>
+            <input
+              class="preview-slider"
+              type="range"
+              min="0"
+              :max="Math.max(0, sourceFrameTotal - 1)"
+              :value="sourceFrameIndex"
+              @input="seekSourceFrame($event.target.value)"
+              x-show="sourcePreviewMode === 'frames'"
+            >
+            <span class="preview-slider-text" x-show="sourcePreviewMode === 'frames'" x-text="(sourceFrameIndex + 1) + ' / ' + Math.max(1, sourceFrameTotal)"></span>
+          </div>
+        </div>
+
+        <div class="preview-container module-card">
+          <div class="preview-header">
+            <div class="preview-title-group">
+              <span class="preview-title">处理后预览</span>
+              <span class="preview-subtitle">实时确认最终输出效果</span>
+            </div>
+            <div class="preview-meta">
+              <span class="semi-tag semi-tag-success" x-show="isProcessed">已完成</span>
+              <span class="semi-tag semi-tag-primary" x-show="isProcessing">处理中</span>
+              <span class="semi-tag" x-show="processedMediaInfo.type === 'video' && processedMediaInfo.fps > 0" x-text="'FPS ' + formatFps(processedMediaInfo.fps)"></span>
+              <span class="semi-tag" x-show="processedMediaInfo.width > 0" x-text="processedMediaInfo.width + '×' + processedMediaInfo.height"></span>
+              <div class="preview-inline-controls">
+                <button class="semi-button semi-button-tertiary semi-button-small" :disabled="!processedUrl || !processedIsVideo" @click="playProcessed()">▶️ 播放</button>
+                <button class="semi-button semi-button-tertiary semi-button-small" :disabled="!processedUrl || !processedIsVideo" @click="pauseProcessed()">⏸️ 暂停</button>
+              </div>
+            </div>
+          </div>
+          <div class="preview-content">
+            <template x-if="!processedUrl">
+              <div class="preview-placeholder">
+                <span class="preview-placeholder-icon">🖼️</span>
+                <span>处理后预览将显示在这里</span>
+              </div>
+            </template>
+            <template x-if="processedUrl && processedIsVideo && processedPreviewMode === 'video'">
+              <video
+                class="preview-video video-js vjs-big-play-centered"
+                :src="processedUrl"
+                :key="processedUrl"
+                x-ref="processedVideo"
+                preload="metadata"
+                controls
+                playsinline
+                @error="onProcessedVideoError()"
+              ></video>
+            </template>
+            <template x-if="processedUrl && processedIsVideo && processedPreviewMode === 'frames'">
+              <img class="preview-image" :src="processedFrameUrl || processedUrl" alt="Processed Frame Preview">
+            </template>
+            <template x-if="processedUrl && processedIsVideo && processedPreviewMode === 'native'">
+              <div class="native-player-hint">
+                <span class="native-player-hint-icon">🎬</span>
+                <span>已启用高性能原生播放器窗口预览</span>
+                <span class="native-player-hint-sub">支持流畅播放与拖动进度条</span>
+              </div>
+            </template>
+            <template x-if="processedUrl && !processedIsVideo">
+              <img class="preview-image" :src="processedUrl" alt="Processed">
+            </template>
+            <div class="preview-loading-overlay" x-show="isProcessing && !processedUrl" x-transition.opacity.duration.180ms>
+              <div class="preview-loading-card">
+                <div class="skeleton-line skeleton-line-title"></div>
+                <div class="skeleton-line"></div>
+                <div class="skeleton-line skeleton-line-short"></div>
+              </div>
+            </div>
+          </div>
+          <div class="preview-controls" x-show="processedUrl">
+            <button class="semi-button semi-button-tertiary semi-button-small" :disabled="!processedIsVideo" @click="playProcessed()">▶️ 播放</button>
+            <button class="semi-button semi-button-tertiary semi-button-small" :disabled="!processedIsVideo" @click="pauseProcessed()">⏸️ 暂停</button>
+            <button class="semi-button semi-button-tertiary semi-button-small" :disabled="!processedIsVideo" x-show="processedPreviewMode === 'native'" @click="focusProcessedNativePlayer()">🪟 打开播放器</button>
+            <input
+              class="preview-slider"
+              type="range"
+              min="0"
+              :max="Math.max(0, processedNativeDuration)"
+              :value="processedNativePosition"
+              step="0.01"
+              @input="seekProcessedNative($event.target.value)"
+              x-show="processedPreviewMode === 'native'"
+            >
+            <span class="preview-slider-text" x-show="processedPreviewMode === 'native'" x-text="formatDuration(processedNativePosition) + ' / ' + formatDuration(processedNativeDuration)"></span>
+            <input
+              class="preview-slider"
+              type="range"
+              min="0"
+              :max="Math.max(0, processedFrameTotal - 1)"
+              :value="processedFrameIndex"
+              @input="seekProcessedFrame($event.target.value)"
+              x-show="processedPreviewMode === 'frames'"
+            >
+            <span class="preview-slider-text" x-show="processedPreviewMode === 'frames'" x-text="(processedFrameIndex + 1) + ' / ' + Math.max(1, processedFrameTotal)"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="control-section">
+        <div class="control-pane control-pane-mask">
+          <div class="mask-section module-card">
+            <div class="mask-header">
+              <div class="mask-title-group">
+                <span class="mask-title">水印区域标注</span>
+                <span class="mask-subtitle">推荐先自动检测，再补充手动区域</span>
+              </div>
+              <div class="mask-actions">
+                <button class="semi-button semi-button-tertiary semi-button-small" @click="detectWatermark()" :disabled="!currentFile || isProcessing || isDetecting">
+                  <span x-show="!isDetecting">🔍 自动检测</span>
+                  <span x-show="isDetecting">⏳ 检测中</span>
+                </button>
+                <button class="semi-button semi-button-tertiary semi-button-small" @click="addManualMask()" :disabled="isDetecting || isProcessing">
+                  ✏️ 手动添加
+                </button>
+                <button class="semi-button semi-button-tertiary semi-button-small" @click="clearMasks()" :disabled="isDetecting || isProcessing">
+                  🗑️ 清除
+                </button>
+              </div>
+            </div>
+            <div class="mask-body">
+              <div class="mask-skeleton-list" x-show="isDetecting">
+                <div class="mask-skeleton-item">
+                  <div class="skeleton-line skeleton-line-title"></div>
+                  <div class="skeleton-line"></div>
+                </div>
+                <div class="mask-skeleton-item">
+                  <div class="skeleton-line skeleton-line-title"></div>
+                  <div class="skeleton-line skeleton-line-short"></div>
+                </div>
+              </div>
+              <div class="semi-tag semi-tag-primary" x-show="detectedMasks.length > 0 && !isDetecting">
+                已检测到 <span x-text="detectedMasks.length"></span> 个水印区域
+              </div>
+              <div class="mask-empty" x-show="detectedMasks.length === 0 && !isDetecting">
+                暂无标注区域，可点击“自动检测”快速开始
+              </div>
+              <div class="mask-list" x-show="detectedMasks.length > 0 && !isDetecting">
+                <template x-for="(mask, idx) in detectedMasks.slice(0, 6)" :key="idx">
+                  <div class="mask-chip">
+                    <span class="mask-chip-title" x-text="'区域 ' + (idx + 1)"></span>
+                    <span class="mask-chip-text" x-text="Math.round(mask.x) + ',' + Math.round(mask.y) + ' · ' + Math.round(mask.width) + '×' + Math.round(mask.height)"></span>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="control-pane control-pane-settings">
+          <div class="settings-section">
+            <div class="settings-card settings-card-main module-card">
+              <div class="settings-card-head">
+                <div class="settings-card-head-main">
+                  <h3 class="settings-card-title">关键参数</h3>
+                  <div class="settings-summary">
+                    <span class="semi-tag" x-text="mode === 'batch' ? '批量模式' : '单文件模式'"></span>
+                    <span class="semi-tag" x-text="settings.videoType === 'sora' ? 'Sora视频' : '通用视频'"></span>
+                    <span class="semi-tag semi-tag-success" x-show="settings.outputPath">已设置输出目录</span>
+                  </div>
+                </div>
+                <button
+                  class="semi-button semi-button-tertiary semi-button-small"
+                  @click="showAdvancedSettings = !showAdvancedSettings"
+                  x-text="showAdvancedSettings ? '收起高级参数' : '展开高级参数'"
+                ></button>
+              </div>
+
+              <div class="settings-grid key-settings-grid">
+                <div class="settings-item">
+                  <span class="settings-item-label">视频类型</span>
+                  <div class="settings-item-value">
+                    <label class="semi-radio-wrapper" :class="{ 'checked': settings.videoType === 'general' }">
+                      <span class="semi-radio">
+                        <span class="semi-radio-inner"></span>
+                      </span>
+                      <input type="radio" name="videoType" value="general" x-model="settings.videoType" hidden>
+                      <span>通用视频</span>
+                    </label>
+                    <label class="semi-radio-wrapper" :class="{ 'checked': settings.videoType === 'sora' }">
+                      <span class="semi-radio">
+                        <span class="semi-radio-inner"></span>
+                      </span>
+                      <input type="radio" name="videoType" value="sora" x-model="settings.videoType" hidden>
+                      <span>Sora视频</span>
+                    </label>
+                  </div>
+                </div>
+
+                <div class="settings-item settings-item-wide">
+                  <span class="settings-item-label">输出目录</span>
+                  <div class="settings-item-value settings-item-grow">
+                    <div class="semi-input-wrapper">
+                      <input type="text" class="semi-input" x-model="settings.outputPath" placeholder="选择输出文件夹...">
+                      <button class="semi-input-suffix-btn" @click="selectOutputPath()">📁</button>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="settings-item">
+                  <span class="settings-item-label">输出质量</span>
+                  <div class="settings-item-value">
+                    <select class="semi-input settings-select-small" x-model="settings.outputQuality">
+                      <option value="high">高质量</option>
+                      <option value="medium">中等</option>
+                      <option value="low">低质量</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <div class="advanced-settings" x-show="showAdvancedSettings" x-transition.opacity.duration.150ms>
+                <div class="advanced-settings-title">高级参数</div>
+                <div class="settings-grid advanced-settings-grid">
+                  <div class="settings-item">
+                    <span class="settings-item-label">Sora优化</span>
+                    <div class="settings-item-value">
+                      <label class="semi-checkbox-wrapper" :class="{ 'checked': settings.soraOptimized }">
+                        <span class="semi-checkbox">
+                          <span class="semi-checkbox-icon">✓</span>
+                        </span>
+                        <input type="checkbox" x-model="settings.soraOptimized" hidden>
+                      </label>
+                    </div>
+                  </div>
+
+                  <div class="settings-item">
+                    <span class="settings-item-label">检测模式</span>
+                    <div class="settings-item-value">
+                      <label class="semi-radio-wrapper" :class="{ 'checked': settings.detectionMode === 'auto' }">
+                        <span class="semi-radio">
+                          <span class="semi-radio-inner"></span>
+                        </span>
+                        <input type="radio" name="detectionMode" value="auto" x-model="settings.detectionMode" hidden>
+                        <span>自动</span>
+                      </label>
+                      <label class="semi-radio-wrapper" :class="{ 'checked': settings.detectionMode === 'manual' }">
+                        <span class="semi-radio">
+                          <span class="semi-radio-inner"></span>
+                        </span>
+                        <input type="radio" name="detectionMode" value="manual" x-model="settings.detectionMode" hidden>
+                        <span>手动</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  <div class="settings-item">
+                    <span class="settings-item-label">检测间隔</span>
+                    <div class="settings-item-value">
+                      <input type="number" class="semi-input settings-input-small" x-model="settings.detectionSkip" min="1" max="10">
+                      <span>帧</span>
+                    </div>
+                  </div>
+
+                  <div class="settings-item">
+                    <span class="settings-item-label">检测灵敏度</span>
+                    <div class="settings-item-value">
+                      <input type="range" min="0" max="100" class="settings-range" x-model.number="settings.sensitivity">
+                      <span x-text="settings.sensitivity + '%'"></span>
+                    </div>
+                  </div>
+
+                  <div class="settings-item">
+                    <span class="settings-item-label">输出格式</span>
+                    <div class="settings-item-value">
+                      <select class="semi-input settings-select-small" x-model="settings.outputFormat">
+                        <option value="MP4">MP4</option>
+                        <option value="AVI">AVI</option>
+                        <option value="MOV">MOV</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div class="settings-item">
+                    <span class="settings-item-label">GPU加速</span>
+                    <div class="settings-item-value">
+                      <label class="semi-checkbox-wrapper" :class="{ 'checked': settings.useGpu }">
+                        <span class="semi-checkbox">
+                          <span class="semi-checkbox-icon">✓</span>
+                        </span>
+                        <input type="checkbox" x-model="settings.useGpu" hidden>
+                      </label>
+                    </div>
+                  </div>
+
+                  <div class="settings-item">
+                    <span class="settings-item-label">FP16推理</span>
+                    <div class="settings-item-value">
+                      <label class="semi-checkbox-wrapper" :class="{ 'checked': settings.useFp16 }">
+                        <span class="semi-checkbox">
+                          <span class="semi-checkbox-icon">✓</span>
+                        </span>
+                        <input type="checkbox" x-model="settings.useFp16" hidden>
+                      </label>
+                    </div>
+                  </div>
+
+                  <div class="settings-item">
+                    <span class="settings-item-label">批处理大小</span>
+                    <div class="settings-item-value">
+                      <input type="number" class="semi-input settings-input-small" x-model="settings.batchSize" min="1" max="16">
+                    </div>
+                  </div>
+
+                  <div class="settings-item">
+                    <span class="settings-item-label">渐入渐出</span>
+                    <div class="settings-item-value">
+                      <label class="semi-checkbox-wrapper" :class="{ 'checked': settings.handleFade }">
+                        <span class="semi-checkbox">
+                          <span class="semi-checkbox-icon">✓</span>
+                        </span>
+                        <input type="checkbox" x-model="settings.handleFade" hidden>
+                      </label>
+                    </div>
+                  </div>
+
+                  <div class="settings-item">
+                    <span class="settings-item-label">渐入时间</span>
+                    <div class="settings-item-value">
+                      <input type="number" class="semi-input settings-input-small" x-model="settings.fadeIn" min="0" max="5" step="0.1">
+                      <span>秒</span>
+                    </div>
+                  </div>
+
+                  <div class="settings-item">
+                    <span class="settings-item-label">渐出时间</span>
+                    <div class="settings-item-value">
+                      <input type="number" class="semi-input settings-input-small" x-model="settings.fadeOut" min="0" max="5" step="0.1">
+                      <span>秒</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="progress-section module-card" x-show="isProcessing || isProcessed" :class="{ 'is-processing': isProcessing }">
+        <div class="progress-header">
+          <div class="progress-status">
+            <span class="semi-spin" x-show="isProcessing"></span>
+            <span x-text="statusMessage"></span>
+          </div>
+          <span class="semi-tag" x-text="Math.round(progress * 100) + '%'"></span>
+        </div>
+        <div class="semi-progress" :class="{ 'animate': isProcessing }">
+          <div class="semi-progress-inner" :style="{ width: progress * 100 + '%' }"></div>
+        </div>
+        <div class="progress-metrics">
+          <div class="progress-metric-card">
+            <span class="progress-metric-label">当前模式</span>
+            <span class="progress-metric-value" x-text="mode === 'batch' ? '批量处理' : '单文件处理'"></span>
+          </div>
+          <div class="progress-metric-card">
+            <span class="progress-metric-label">处理帧数</span>
+            <span class="progress-metric-value" x-text="processedFrames + ' / ' + (totalFrames || '--')"></span>
+          </div>
+          <div class="progress-metric-card">
+            <span class="progress-metric-label">预计剩余</span>
+            <span class="progress-metric-value" x-text="estimatedTime"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="action-bar module-card">
+        <div class="action-group">
+          <button class="semi-button semi-button-secondary" @click="previewDetection()" :disabled="!currentFile || isProcessing || mode === 'batch'">
+            🔍 预览检测结果
+          </button>
+          <button class="semi-button semi-button-secondary" @click="openOutputDir()" :disabled="!isProcessed">
+            📁 打开输出目录
+          </button>
+        </div>
+        <div class="action-group">
+          <button class="semi-button semi-button-primary action-main-btn" @click="startProcessing()" :disabled="!currentFile || isProcessing">
+            ▶️ 开始处理
+          </button>
+          <button class="semi-button semi-button-danger action-stop-btn" @click="stopProcessing()" :disabled="!isProcessing">
+            ⏹️ 停止
+          </button>
+        </div>
+      </div>
+    </main>
+
+    <section class="annotation-workspace module-card" x-show="showAnnotationWorkspace" x-transition.opacity.duration.120ms>
+      <div class="annotation-workspace-header">
+        <div class="annotation-workspace-title">
+          <strong>人工打标工作台</strong>
+          <span class="annotation-workspace-subtitle" x-text="currentFile ? currentFile.split('/').pop() : '未选择视频'"></span>
+        </div>
+        <div class="annotation-workspace-actions">
+          <span class="semi-tag">标记数 <span x-text="annotationSegments.length"></span></span>
+          <span class="semi-tag" x-show="sourceMediaInfo.width > 0" x-text="sourceMediaInfo.width + '×' + sourceMediaInfo.height"></span>
+          <span class="semi-tag" x-show="sourceMediaInfo.fps > 0" x-text="'FPS ' + formatFps(sourceMediaInfo.fps)"></span>
+          <button class="semi-button semi-button-secondary semi-button-small" @click="loadAnnotations()">加载标注</button>
+          <button class="semi-button semi-button-secondary semi-button-small" @click="saveAnnotations()" :disabled="!currentFile">保存标注</button>
+          <button class="semi-button semi-button-secondary semi-button-small" @click="clearAnnotations()" :disabled="annotationSegments.length === 0">清空标注</button>
+          <button class="semi-button semi-button-tertiary semi-button-small" @click="exitAnnotationWorkspace()">返回主界面</button>
+        </div>
+      </div>
+
+      <div class="annotation-workspace-body">
+        <div class="annotation-player-pane">
+          <div class="annotation-stage-shell">
+            <div class="annotation-stage" x-ref="annotationStage">
+              <template x-if="sourceFrameUrl || previewUrl">
+                <img class="annotation-stage-image" :src="sourceFrameUrl || previewUrl" x-ref="annotationImage" @load="syncAnnotationStageMetrics()">
+              </template>
+              <div class="annotation-overlay"
+                   @mousedown="startAnnotationDraw($event)"
+                   @mousemove="moveAnnotationDraw($event)"
+                   @mouseup="endAnnotationDraw($event)"
+                   @mouseleave="endAnnotationDraw($event)">
+                <template x-for="seg in getVisibleAnnotationSegments()" :key="seg.id">
+                  <div class="annotation-rect"
+                       :class="{ 'active': isAnnotationSegmentActive(seg), 'selected': selectedAnnotationId === seg.id }"
+                       :style="annotationRectStyle(seg)"
+                       @mousedown.stop
+                       @click.stop="selectAnnotation(seg.id)"></div>
+                </template>
+                <div class="annotation-rect draft" x-show="annotationDraftRect" :style="annotationDraftRectStyle()"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <aside class="annotation-list-pane">
+          <div class="annotation-list-head">
+            <span>标记列表（按覆盖优先级）</span>
+            <label class="semi-checkbox-wrapper" :class="{ 'checked': annotationShowAll }">
+              <span class="semi-checkbox"><span class="semi-checkbox-icon">✓</span></span>
+              <input type="checkbox" x-model="annotationShowAll" hidden>
+              <span>显示全部</span>
+            </label>
+          </div>
+          <div class="annotation-list-scroll">
+            <div class="annotation-empty" x-show="annotationSegments.length === 0">暂无标记，拖拽视频区域创建矩形后添加区间</div>
+            <template x-for="(seg, idx) in annotationSegments" :key="seg.id">
+              <div class="annotation-item" :class="{ 'selected': selectedAnnotationId === seg.id }" @click="selectAnnotation(seg.id)">
+                <div class="annotation-item-row">
+                  <span class="annotation-item-title" x-text="'标记 #' + (idx + 1)"></span>
+                  <span class="semi-tag semi-tag-success" x-show="seg.enabled !== false">启用</span>
+                  <span class="semi-tag" x-show="seg.enabled === false">停用</span>
+                  <span class="semi-tag" x-text="seg.start_frame + ' - ' + seg.end_frame"></span>
+                </div>
+                <div class="annotation-item-row annotation-item-meta">
+                  <span x-text="annotationDurationText(seg)"></span>
+                </div>
+                <div class="annotation-item-row annotation-item-meta">
+                  <span x-text="'x:' + seg.rect.x + ' y:' + seg.rect.y + ' w:' + seg.rect.width + ' h:' + seg.rect.height"></span>
+                </div>
+                <div class="annotation-item-row">
+                  <label class="semi-checkbox-wrapper" :class="{ 'checked': seg.enabled !== false }">
+                    <span class="semi-checkbox"><span class="semi-checkbox-icon">✓</span></span>
+                    <input type="checkbox" :checked="seg.enabled !== false" @change="toggleAnnotationEnabled(seg.id, $event.target.checked)" hidden>
+                    <span>启用</span>
+                  </label>
+                  <button class="semi-button semi-button-tertiary semi-button-small" @click.stop="jumpToAnnotation(seg.id)">跳转</button>
+                  <button class="semi-button semi-button-tertiary semi-button-small" @click.stop="setAnnotationStart(seg.id, annotationCurrentFrame)">设起点</button>
+                  <button class="semi-button semi-button-tertiary semi-button-small" @click.stop="setAnnotationEnd(seg.id, annotationCurrentFrame)">设终点</button>
+                  <button class="semi-button semi-button-tertiary semi-button-small" @click.stop="removeAnnotation(seg.id)">删除</button>
+                </div>
+              </div>
+            </template>
+          </div>
+        </aside>
+      </div>
+
+      <div class="annotation-workspace-footer">
+        <div class="annotation-footer-row">
+          <button class="semi-button semi-button-tertiary semi-button-small" @click="playAnnotation()">▶️ 播放</button>
+          <button class="semi-button semi-button-tertiary semi-button-small" @click="pauseAnnotation()">⏸️ 暂停</button>
+          <button class="semi-button semi-button-tertiary semi-button-small" @click="stepAnnotation(-1)">◀️ 上一帧</button>
+          <button class="semi-button semi-button-tertiary semi-button-small" @click="stepAnnotation(1)">下一帧 ▶️</button>
+          <span class="annotation-frame-text" x-text="'当前帧: ' + annotationCurrentFrame + ' / ' + annotationFrameMax"></span>
+          <button class="semi-button semi-button-secondary semi-button-small" @click="addAnnotationFromDraft()" :disabled="!annotationDraftRect">新增标记段</button>
+        </div>
+        <input class="annotation-frame-slider" type="range" min="0" :max="annotationFrameMax" :value="annotationCurrentFrame" @input="seekAnnotationFrame($event.target.value)">
+        <div class="annotation-track" x-ref="annotationTrack">
+          <template x-for="seg in annotationSegments" :key="'track-' + seg.id">
+            <div class="annotation-track-segment"
+                 :class="{ 'selected': selectedAnnotationId === seg.id }"
+                 :style="annotationTrackStyle(seg)"
+                 @click.stop="selectAnnotation(seg.id)">
+              <span class="track-handle left" @mousedown.stop="startAnnotationSegmentDrag(seg.id, 'start', $event)"></span>
+              <span class="track-handle right" @mousedown.stop="startAnnotationSegmentDrag(seg.id, 'end', $event)"></span>
+            </div>
+          </template>
+          <div class="annotation-track-cursor" :style="annotationTrackCursorStyle()"></div>
+        </div>
+      </div>
+    </section>
+
+    <footer class="status-bar module-card" x-show="!showAnnotationWorkspace">
+      <div class="status-item">
+        <span class="status-indicator" :class="statusClass"></span>
+        <span x-text="statusText"></span>
+      </div>
+      <div class="status-item">
+        <span class="status-label">模式</span>
+        <span class="semi-tag" x-text="mode === 'batch' ? '批量' : '单文件'"></span>
+      </div>
+      <div class="status-item">
+        <span class="status-label">类型</span>
+        <span class="semi-tag" x-text="settings.videoType === 'sora' ? 'Sora' : '通用'"></span>
+      </div>
+      <div class="status-item">
+        <span class="status-label">设备</span>
+        <span x-text="deviceInfo"></span>
+      </div>
+      <div class="status-item">
+        <span class="status-label">内存</span>
+        <span x-text="memoryUsage"></span>
+      </div>
+    </footer>
+  </div>
+
+  <script src="https://vjs.zencdn.net/8.23.4/video.min.js"></script>
+  <script src="static/js/theme.js"></script>
+  <script src="static/js/app.js"></script>
+</body>
+</html>
