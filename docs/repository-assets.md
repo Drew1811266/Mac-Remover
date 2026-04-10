@@ -22,6 +22,9 @@
   - 保留原因：本轮明确作为正式离线模型资产保留
 - `models/runtime/seedvr-py312/`
   - SeedVR2 离线运行时、权重和独立 Python 环境
+  - 例外：`models/runtime/seedvr-py312/models/SEEDVR2/seedvr2_ema_3b-Q8_0.gguf`
+  - 不纳入 Git 仓库，原因是该文件超过 GitHub LFS 2 GiB 单文件限制
+  - 仓库保留 `seedvr2_ema_3b-Q4_K_M.gguf` 作为默认离线 GGUF 模型
 - `models/runtime/realesrgan-py312/`
   - Real-ESRGAN 离线运行时、权重和独立 Python 环境
 - `models/third_party/ProPainter/`
@@ -37,6 +40,7 @@
 - `frontend/node_modules/`
 - `models/.download_staging/`
 - 所有 `.DS_Store`、`__pycache__`、`.cache/`
+- `models/runtime/seedvr-py312/models/SEEDVR2/seedvr2_ema_3b-Q8_0.gguf`
 
 以下历史第三方目录已从主仓库清理：
 
@@ -58,4 +62,3 @@
 - `vendor/ffmpeg/*/ffmpeg`
 
 这不是“可选优化”，而是 GitHub 上传的必要条件。当前仓库存在多个超过 100MB 的离线模型文件。
-

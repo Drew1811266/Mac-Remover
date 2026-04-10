@@ -1,0 +1,47 @@
+# macOS / editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Local agent / tool state
+.omx/
+.trae/
+
+# Python caches and local envs
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+venv/
+.venv/
+!models/runtime/**/venv/
+!models/runtime/**/venv/**
+
+# Node local installs
+node_modules/
+frontend/node_modules/
+
+# Local runtime/config outputs
+logs/
+*.log
+.mac_watermark_remover/
+
+# Download and model caches
+models/.download_staging/
+models/**/.cache/
+# GitHub LFS hard-limits single objects to 2 GiB; keep this local and fetch on demand.
+models/runtime/seedvr-py312/models/SEEDVR2/seedvr2_ema_3b-Q8_0.gguf
+
+# Build / temp outputs
+tmp/
+temp/
+*.tmp
+
+# Environment files
+.env
+.env.*
+!.env.example

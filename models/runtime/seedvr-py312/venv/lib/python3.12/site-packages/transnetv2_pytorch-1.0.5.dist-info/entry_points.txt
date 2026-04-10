@@ -1,0 +1,2 @@
+[console_scripts]
+transnetv2_pytorch = transnetv2_pytorch.cli:main

@@ -1,0 +1,26 @@
+#!/bin/sh
+set -eu
+
+SELF_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+FFMPEG_BIN="$SELF_DIR/ffmpeg"
+
+if [ ! -x "$FFMPEG_BIN" ]; then
+  echo "ffprobe shim error: embedded ffmpeg executable not found at $FFMPEG_BIN" >&2
+  exit 127
+fi
+
+INPUT_FILE=""
+for arg in "$@"; do
+  INPUT_FILE="$arg"
+done
+
+if [ -z "$INPUT_FILE" ] || [ ! -f "$INPUT_FILE" ]; then
+  exit 1
+fi
+
+PROBE_LOG="$($FFMPEG_BIN -hide_banner -i "$INPUT_FILE" -f null - 2>&1 || true)"
+if printf '%s\n' "$PROBE_LOG" | grep -qi 'Audio:'; then
+  printf 'audio\n'
+fi
+
+exit 0

@@ -1,0 +1,7 @@
+{
+  "prepared_at": 1772678272,
+  "python312": "/Users/drew/.homebrew/opt/python@3.12/bin/python3.12",
+  "venv_python": "/Users/drew/Project/Mac Remover/models/runtime/seedvr-py312/venv/bin/python",
+  "inference_script": "/Users/drew/Project/Mac Remover/models/runtime/seedvr-py312/seedvr2_repo/inference_cli.py",
+  "model_dir": "/Users/drew/Project/Mac Remover/models/runtime/seedvr-py312/models/SEEDVR2"
+}

@@ -1,0 +1,7 @@
+{
+  "prepared_at": 1772765055,
+  "python312": "/Users/drew/.homebrew/bin/python3.12",
+  "venv_python": "/Users/drew/Project/Mac Remover/models/runtime/realesrgan-py312/venv/bin/python",
+  "worker_script": "/Users/drew/Project/Mac Remover/src/core/realesrgan_worker.py",
+  "model_dir": "/Users/drew/Project/Mac Remover/models/runtime/realesrgan-py312/weights"
+}
