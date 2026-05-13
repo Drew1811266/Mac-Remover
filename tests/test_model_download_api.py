@@ -107,7 +107,7 @@ class ModelDownloadApiTests(unittest.TestCase):
 
             self._wait_for_state(api, {"running"})
 
-            start_2 = api.start_model_download({"model_id": "propainter_roi", "force": False})
+            start_2 = api.start_model_download({"model_id": "lama_roi", "force": False})
             self.assertFalse(start_2["success"])
             self.assertIn("already running", start_2["error"])
 
@@ -136,7 +136,7 @@ class ModelDownloadApiTests(unittest.TestCase):
 
         with patch("src.gui.api.download_model", side_effect=fake_download):
             api = API()
-            started = api.start_model_download({"model_id": "propainter_roi", "force": True})
+            started = api.start_model_download({"model_id": "lama_roi", "force": True})
             self.assertTrue(started["success"])
 
             self._wait_for_state(api, {"running"})

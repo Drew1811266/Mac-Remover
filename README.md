@@ -1,12 +1,12 @@
 # Mac Watermark Remover
 
-Mac 桌面端视频去水印工具。当前仓库定位为“可上传到 GitHub、可离线运行”的产品仓库，而不是单机开发目录快照。
+Mac/Windows 桌面端视频去水印工具。当前产品路径正在切换为 Electron + React + TypeScript + Node 本地服务，发布包不再依赖 Python/pywebview。
 
 ## Repository Shape
 
-- Python 主程序位于 `src/`
-- React 前端源码位于 `frontend/`
-- 运行时优先加载 `src/gui/templates/dist/` 中的已构建前端
+- Electron 主进程、preload、本地服务位于 `frontend/electron/`
+- React 前端源码位于 `frontend/src/`
+- 运行时加载 `src/gui/templates/dist/` 中的已构建前端
 - 离线模型与运行时资产位于 `models/`
 - 内置 FFmpeg 位于 `vendor/ffmpeg/`
 
@@ -16,8 +16,7 @@ Mac 桌面端视频去水印工具。当前仓库定位为“可上传到 GitHub
 - `src/gui/templates/dist/`: 已构建前端，避免首次运行前必须手动构建
 - `models/big-lama/`: 本地 LaMa 资产
 - `models/florence2-base/`: 本地 Florence-2 资产，当前作为正式离线模型目录保留
-- `models/runtime/`: SeedVR2 / Real-ESRGAN 离线运行时与权重
-- `models/third_party/ProPainter/`: 主流程仍在使用的第三方源码与权重
+- `models/runtime/`: 旧 Python 版 SeedVR2 / Real-ESRGAN 资产，仅作为迁移参考，不进入 Electron 发布包
 
 例外说明：
 
@@ -47,24 +46,37 @@ git lfs pull
 
 ## Local Development
 
-启动桌面应用：
+启动开发版 Electron 桌面应用：
 
 ```bash
 ./run.sh
 ```
 
-首次运行会自动创建根 `venv/` 并安装 `requirements.txt` 中的 Python 依赖。该根环境是本机可重建产物，不纳入版本库。
+首次运行会在 `frontend/` 下安装 Node/Electron 依赖，然后构建并启动开发版 Electron。日常功能开发使用这条路径，不需要启动 `frontend/release/` 下的打包 `.app`。该路径不会创建 Python `venv`。
 
-构建前端：
+构建前端与 Electron 主进程：
 
 ```bash
-./scripts/build_frontend.sh
+cd frontend
+npm run build
+npm run electron:build
 ```
 
-下载基础去水印模型：
+功能回归测试：
 
 ```bash
-python3 scripts/download_models.py --all
+cd frontend
+npm run functional:test
+```
+
+功能测试说明见 `docs/functional-testing.md`。
+
+发布前打包 Electron：
+
+```bash
+cd frontend
+npm run electron:pack -- --mac
+npm run electron:verify-release
 ```
 
 清理本机开发垃圾文件：
@@ -75,6 +87,6 @@ python3 scripts/download_models.py --all
 
 ## Notes
 
-- `models/runtime/*/venv` 当前作为正式离线资产保留。本轮没有改成在线重建模式。
+- `models/runtime/*/venv` 不进入 Electron 发布包。
 - `seedvr2_ema_3b-Q8_0.gguf` 如需使用，请在本机单独下载到 `models/runtime/seedvr-py312/models/SEEDVR2/`。
-- 如果后续要进一步瘦身仓库，建议单独做“离线 bootstrap / wheelhouse”重构，而不是在当前结构上半删半留。
+- Electron 版去水印处理仅内置 LaMa-ROI；Real-ESRGAN、SeedVR2 放大能力在可信原生资产缺失时会显示为阻塞状态。

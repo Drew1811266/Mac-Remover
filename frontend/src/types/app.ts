@@ -8,7 +8,7 @@ export type Language = 'zh' | 'en';
 export type ThemeMode = 'light' | 'dark';
 
 // 后端支持的模型 ID，前后端保持一致。
-export type ModelId = 'lama_roi' | 'propainter_roi';
+export type ModelId = 'lama_roi';
 
 // AI 放大模式。
 export type UpscaleMode = 'upscale_resolution' | 'enhance_same_resolution';

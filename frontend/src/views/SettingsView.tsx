@@ -1,30 +1,10 @@
 // 设置侧栏视图：
 // 语言/主题/输出目录，以及模型下载管理。
-import { Button, Input, Progress, Radio, Select, Space, Typography } from '@douyinfe/semi-ui';
 import type { AppSettings } from '../types/app';
-import type { ModelDownloadEntry, ModelDownloadTask } from '../services/pywebview';
+import type { ModelDownloadEntry, ModelDownloadTask } from '../services/desktop';
 import { useI18n } from '../i18n/useI18n';
-
-const { Text } = Typography;
-
-function normalizeLanguageValue(
-  value: unknown,
-  fallback: AppSettings['language'],
-): AppSettings['language'] {
-  // 兼容 Select 可能返回的多种值结构。
-  if (value === 'zh' || value === 'en') return value;
-
-  if (Array.isArray(value) && value.length > 0) {
-    return normalizeLanguageValue(value[0], fallback);
-  }
-
-  if (value && typeof value === 'object' && 'value' in value) {
-    const optionValue = (value as { value?: unknown }).value;
-    return normalizeLanguageValue(optionValue, fallback);
-  }
-
-  return fallback;
-}
+import { MdButton, MdChip, MdLinearProgress, MdSelect, MdTextField } from '../material';
+import { useState } from 'react';
 
 interface SettingsViewProps {
   settings: AppSettings;
@@ -60,6 +40,8 @@ function formatSpeed(raw: number): string {
   return `${(speed / (1024 * 1024)).toFixed(2)} MB/s`;
 }
 
+type SettingsSection = 'general' | 'output' | 'models';
+
 export function SettingsView({
   settings,
   saving,
@@ -76,6 +58,12 @@ export function SettingsView({
 }: SettingsViewProps) {
   const { t } = useI18n();
   const isDownloadRunning = downloadTask.state === 'running';
+  const [activeSection, setActiveSection] = useState<SettingsSection>('general');
+  const sectionTabs: Array<{ key: SettingsSection; label: string }> = [
+    { key: 'general', label: t('settings.section.general') },
+    { key: 'output', label: t('settings.section.output') },
+    { key: 'models', label: t('settings.section.models') },
+  ];
 
   const downloadStateLabelMap: Record<ModelDownloadTask['state'], string> = {
     idle: t('settings.modelDownload.status.idle'),
@@ -93,133 +81,176 @@ export function SettingsView({
     // 上方介绍 + 中间字段区 + 底部保存/重置操作。
     <div className="settings-panel">
       <div className="settings-panel-intro">
-        <Text type="tertiary" className="settings-subtitle">{t('settings.subtitle')}</Text>
+        <p className="settings-subtitle">{t('settings.subtitle')}</p>
+      </div>
+
+      <div className="settings-tabs" role="tablist" aria-label={t('settings.title')}>
+        {sectionTabs.map((item) => (
+          <button
+            key={item.key}
+            type="button"
+            role="tab"
+            aria-selected={activeSection === item.key}
+            className={activeSection === item.key ? 'is-selected' : ''}
+            onClick={() => setActiveSection(item.key)}
+          >
+            {item.label}
+          </button>
+        ))}
       </div>
 
       <div className="settings-body">
-        <div className="settings-field settings-field-card">
-          <Text className="settings-label">{t('settings.language')}</Text>
-          <Select
-            value={settings.language}
-            onChange={(value) => onChangeLanguage(normalizeLanguageValue(value, settings.language))}
-            optionList={[
-              { value: 'zh', label: t('settings.language.zh') },
-              { value: 'en', label: t('settings.language.en') },
-            ]}
-          />
-        </div>
+        {activeSection === 'general' ? (
+          <div className="settings-section-page" role="tabpanel">
+            <div className="settings-field settings-field-card">
+              <span className="settings-label">{t('settings.language')}</span>
+              <MdSelect
+                value={settings.language}
+                onChange={onChangeLanguage}
+                options={[
+                  { value: 'zh', label: t('settings.language.zh') },
+                  { value: 'en', label: t('settings.language.en') },
+                ]}
+              />
+            </div>
 
-        <div className="settings-field settings-field-card">
-          <Text className="settings-label">{t('settings.theme')}</Text>
-          <Radio.Group
-            type="button"
-            value={settings.theme}
-            onChange={(event) => onChangeTheme(String(event.target.value) as AppSettings['theme'])}
-          >
-            <Radio value="light">{t('settings.theme.light')}</Radio>
-            <Radio value="dark">{t('settings.theme.dark')}</Radio>
-          </Radio.Group>
-        </div>
+            <div className="settings-field settings-field-card">
+              <span className="settings-label">{t('settings.theme')}</span>
+              <div className="md-segmented-control" role="radiogroup" aria-label={t('settings.theme')}>
+                <button
+                  type="button"
+                  className={settings.theme === 'light' ? 'is-selected' : ''}
+                  aria-checked={settings.theme === 'light'}
+                  role="radio"
+                  onClick={() => onChangeTheme('light')}
+                >
+                  {t('settings.theme.light')}
+                </button>
+                <button
+                  type="button"
+                  className={settings.theme === 'dark' ? 'is-selected' : ''}
+                  aria-checked={settings.theme === 'dark'}
+                  role="radio"
+                  onClick={() => onChangeTheme('dark')}
+                >
+                  {t('settings.theme.dark')}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
 
-        <div className="settings-field settings-field-card">
-          <Text className="settings-label">{t('settings.outputPath')}</Text>
-          <Space className="settings-output-row">
-            <Input
-              value={settings.outputPath}
-              onChange={(value) => onChangeOutputPath(String(value))}
-              placeholder={t('settings.outputPath')}
-            />
-            <Button onClick={onSelectOutputFolder}>{t('common.browse')}</Button>
-          </Space>
-        </div>
+        {activeSection === 'output' ? (
+          <div className="settings-section-page" role="tabpanel">
+            <div className="settings-field settings-field-card">
+              <span className="settings-label">{t('settings.outputPath')}</span>
+              <div className="settings-output-row">
+                <MdTextField
+                  value={settings.outputPath}
+                  onChange={onChangeOutputPath}
+                  placeholder={t('settings.outputPath')}
+                />
+                <MdButton variant="outlined" icon="folder_open" onClick={onSelectOutputFolder}>
+                  {t('common.browse')}
+                </MdButton>
+              </div>
+            </div>
+          </div>
+        ) : null}
 
-        <div className="settings-field settings-field-card">
-          <Text className="settings-label">{t('settings.modelDownload.title')}</Text>
+        {activeSection === 'models' ? (
+          <div className="settings-section-page" role="tabpanel">
+            <div className="settings-field settings-field-card">
+              <span className="settings-label">{t('settings.modelDownload.title')}</span>
 
-          <div className="settings-model-download-list">
-            {modelDownloads.map((model) => {
-              const modelId = model.model_id as AppSettings['modelId'];
-              const runningThisModel = isDownloadRunning && downloadTask.model_id === modelId;
-              const disableAction = isDownloadRunning && !runningThisModel;
-              const isRedownload = !!model.installed;
-              const actionLabel = isRedownload
-                ? t('settings.modelDownload.redownload')
-                : t('settings.modelDownload.download');
+              <div className="settings-model-download-list">
+                {modelDownloads.map((model) => {
+                  const modelId = model.model_id as AppSettings['modelId'];
+                  const runningThisModel = isDownloadRunning && downloadTask.model_id === modelId;
+                  const disableAction = isDownloadRunning && !runningThisModel;
+                  const isRedownload = !!model.installed;
+                  const actionLabel = isRedownload
+                    ? t('settings.modelDownload.redownload')
+                    : t('settings.modelDownload.download');
 
-              return (
-                <div className="settings-model-download-row" key={model.model_id}>
-                  <div className="settings-model-download-meta">
-                    <Text strong>{model.display_name}</Text>
-                    <Text type="tertiary">{model.install_hint}</Text>
-                    <Text type={model.installed ? 'success' : 'tertiary'}>
-                      {model.installed
-                        ? t('settings.modelDownload.installed')
-                        : t('settings.modelDownload.notInstalled')}
-                    </Text>
+                  return (
+                    <div className="settings-model-download-row" key={model.model_id}>
+                      <div className="settings-model-download-meta">
+                        <strong>{model.display_name}</strong>
+                        <span className="metadata-text">{model.install_hint}</span>
+                        <MdChip tone={model.installed ? 'success' : 'neutral'}>
+                          {model.installed
+                            ? t('settings.modelDownload.installed')
+                            : t('settings.modelDownload.notInstalled')}
+                        </MdChip>
+                      </div>
+
+                      <MdButton
+                        variant={isRedownload ? 'tonal' : 'filled'}
+                        icon="download"
+                        loading={runningThisModel}
+                        disabled={disableAction}
+                        onClick={() => onStartModelDownload(modelId, isRedownload)}
+                      >
+                        {actionLabel}
+                      </MdButton>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {downloadTask.state !== 'idle' ? (
+                <div className="settings-model-download-progress">
+                  <div className="settings-model-download-progress-head">
+                    <strong>{t('settings.modelDownload.progress')}</strong>
+                    <span>{downloadStateLabelMap[downloadTask.state]}</span>
                   </div>
 
-                  <Button
-                    type="primary"
-                    theme={isRedownload ? 'light' : 'solid'}
-                    loading={runningThisModel}
-                    disabled={disableAction}
-                    onClick={() => onStartModelDownload(modelId, isRedownload)}
-                  >
-                    {actionLabel}
-                  </Button>
+                  <div className="progress-with-value">
+                    <MdLinearProgress value={downloadTask.progress} />
+                    <span>{Math.round(Math.max(0, Math.min(1, downloadTask.progress)) * 100)}%</span>
+                  </div>
+
+                  <div className="settings-model-download-stats">
+                    <span className="metadata-text">
+                      {t('settings.modelDownload.speed')}: {formatSpeed(downloadTask.speed_bps)}
+                    </span>
+                    <span className="metadata-text">
+                      {t('settings.modelDownload.downloaded')}: {totalText}
+                    </span>
+                    <span className="metadata-text" title={downloadTask.current_file || '--'}>
+                      {t('settings.modelDownload.currentFile')}: {downloadTask.current_file || '--'}
+                    </span>
+                  </div>
+
+                  {downloadTask.message ? (
+                    <p className="metadata-text">{downloadTask.message}</p>
+                  ) : null}
+                  {downloadTask.error ? (
+                    <p className="form-error">{downloadTask.error}</p>
+                  ) : null}
+
+                  {isDownloadRunning ? (
+                    <MdButton variant="text" tone="danger" icon="cancel" onClick={onCancelModelDownload}>
+                      {t('settings.modelDownload.cancel')}
+                    </MdButton>
+                  ) : null}
                 </div>
-              );
-            })}
-          </div>
-
-          {downloadTask.state !== 'idle' ? (
-            <div className="settings-model-download-progress">
-              <div className="settings-model-download-progress-head">
-                <Text strong>{t('settings.modelDownload.progress')}</Text>
-                <Text>{downloadStateLabelMap[downloadTask.state]}</Text>
-              </div>
-
-              <Progress
-                percent={Math.round(Math.max(0, Math.min(1, downloadTask.progress)) * 100)}
-                showInfo
-              />
-
-              <div className="settings-model-download-stats">
-                <Text type="tertiary">
-                  {t('settings.modelDownload.speed')}: {formatSpeed(downloadTask.speed_bps)}
-                </Text>
-                <Text type="tertiary">
-                  {t('settings.modelDownload.downloaded')}: {totalText}
-                </Text>
-                <Text type="tertiary" ellipsis={{ showTooltip: true }}>
-                  {t('settings.modelDownload.currentFile')}: {downloadTask.current_file || '--'}
-                </Text>
-              </div>
-
-              {downloadTask.message ? (
-                <Text type="tertiary">{downloadTask.message}</Text>
-              ) : null}
-              {downloadTask.error ? (
-                <Text type="danger">{downloadTask.error}</Text>
-              ) : null}
-
-              {isDownloadRunning ? (
-                <Button type="danger" theme="borderless" onClick={onCancelModelDownload}>
-                  {t('settings.modelDownload.cancel')}
-                </Button>
               ) : null}
             </div>
-          ) : null}
-        </div>
+          </div>
+        ) : null}
       </div>
 
       <div className="settings-actions-wrap">
-        <Space className="settings-actions" wrap>
-          <Button theme="solid" type="primary" loading={saving} onClick={onSave}>
+        <div className="settings-actions">
+          <MdButton variant="filled" icon="save" loading={saving} onClick={onSave}>
             {t('settings.save')}
-          </Button>
-          <Button onClick={onReset}>{t('settings.reset')}</Button>
-        </Space>
+          </MdButton>
+          <MdButton variant="outlined" icon="restart_alt" onClick={onReset}>
+            {t('settings.reset')}
+          </MdButton>
+        </div>
       </div>
     </div>
   );

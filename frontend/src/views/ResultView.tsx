@@ -1,11 +1,20 @@
-import { useEffect, useMemo } from 'react';
-import { Button, Card, Progress, Select, Slider, Space, Switch, Tag, Typography } from '@douyinfe/semi-ui';
+import { useEffect, useMemo, useState } from 'react';
 import type { ResultState, UpscaleCapabilities, UpscaleConfig, UpscaleTaskState } from '../types/app';
 import { useI18n } from '../i18n/useI18n';
-import type { UpscaleModelDownloadEntry, UpscaleModelDownloadTask } from '../services/pywebview';
+import type { UpscaleModelDownloadEntry, UpscaleModelDownloadTask } from '../services/desktop';
 import { FrameComparePreview } from '../components/FrameComparePreview';
-
-const { Text, Title } = Typography;
+import {
+  MdButton,
+  MdChip,
+  MdEmptyState,
+  MaterialIcon,
+  MdLinearProgress,
+  MdSelect,
+  MdSlider,
+  MdSurface,
+  MdSwitch,
+  MdTaskPanel,
+} from '../material';
 
 interface ResultViewProps {
   result: ResultState;
@@ -42,13 +51,9 @@ export function ResultView({
 }: ResultViewProps) {
   const { t } = useI18n();
   const hasResult = !!result.outputUrl;
+  const [showUpscaleAdvanced, setShowUpscaleAdvanced] = useState(false);
   const isVideo = result.mediaType === 'video';
-  const modelLabel =
-    result.modelId === 'lama_roi'
-      ? t('process.model.lama')
-      : result.modelId === 'propainter_roi'
-        ? t('process.model.propainter')
-        : t('process.model.lama');
+  const modelLabel = t('process.model.lama');
   const engineOptionsRaw = (upscaleCapabilities?.engines && upscaleCapabilities.engines.length > 0)
     ? upscaleCapabilities.engines
     : [
@@ -73,7 +78,12 @@ export function ResultView({
   const localizeSeedVRText = (reason: string): string => {
     const text = String(reason || '');
     const lower = text.toLowerCase();
-    if (lower.includes('real-esrgan runtime') || lower.includes('realesrgan runtime')) {
+    if (
+      lower.includes('real-esrgan runtime') ||
+      lower.includes('realesrgan runtime') ||
+      lower.includes('realesrgan native') ||
+      lower.includes('real-esrgan native')
+    ) {
       return t('upscale.realesrgan.runtimeMissing');
     }
     if (lower.includes('unsupported real-esrgan model_id')) {
@@ -99,7 +109,11 @@ export function ResultView({
     if (lower.includes('phase=model_warmup')) return t('upscale.seedvr.phase.warmup');
     if (lower.includes('phase=chunk_infer')) return t('upscale.seedvr.phase.chunkInfer');
     if (lower.includes('phase=flush_output')) return t('upscale.seedvr.phase.flushOutput');
-    if (lower.includes('python 3.12') || lower.includes('seedvr runtime')) return t('upscale.seedvr.runtimeMissing');
+    if (
+      lower.includes('seedvr runtime') ||
+      lower.includes('seedvr native') ||
+      lower.includes('gguf runner')
+    ) return t('upscale.seedvr.runtimeMissing');
     if (lower.includes('requires at least') && lower.includes('memory')) return t('upscale.seedvr.lowMemory');
     if (lower.includes('memory guard triggered') || lower.includes('out of memory')) return t('upscale.seedvr.memoryGuard');
     if (lower.includes('inference stalled') || lower.includes('no forward progress')) {
@@ -202,33 +216,37 @@ export function ResultView({
   }, [effectiveModel, onUpscaleConfigChange, upscaleConfig.modelId]);
 
   return (
-    <Card
-      className="result-card"
-      title={t('result.title')}
-      headerExtraContent={(
-        <Space>
-          <Button onClick={onOpenOutputDir}>{t('common.openOutput')}</Button>
-        </Space>
-      )}
-    >
-      <Text type="tertiary">{t('result.subtitle')}</Text>
+    <MdSurface className="result-card">
+      <div className="surface-header result-header">
+        <div>
+          <h2>{t('result.title')}</h2>
+          <p>{t('result.subtitle')}</p>
+        </div>
+        <MdButton variant="outlined" icon="folder_open" onClick={onOpenOutputDir}>
+          {t('common.openOutput')}
+        </MdButton>
+      </div>
       <div className="result-layout">
-        <div className="result-left-pane">
+        <div className={`result-left-pane ${hasResult ? 'has-result' : 'is-empty'}`}>
           {!hasResult && (
             <div className="result-empty">
-              <Title heading={5}>{t('result.empty')}</Title>
+              <MdEmptyState
+                icon="movie_filter"
+                title={t('result.empty')}
+                description={t('result.subtitle')}
+              />
             </div>
           )}
 
           {hasResult && (
             <>
-              <Space className="result-meta-tags" wrap>
-                <Tag>{`${t('common.fileName')}: ${result.outputPath.split('/').pop()}`}</Tag>
-                <Tag>{`${t('common.resolution')}: ${result.width}×${result.height}`}</Tag>
-                <Tag>{`${t('common.fps')}: ${result.fps ? result.fps.toFixed(2) : '-'}`}</Tag>
-                <Tag>{`${t('common.frames')}: ${result.frameCount}`}</Tag>
-                <Tag>{`${t('result.model')}: ${modelLabel}`}</Tag>
-              </Space>
+              <div className="result-meta-tags">
+                <MdChip>{`${t('common.fileName')}: ${result.outputPath.split('/').pop()}`}</MdChip>
+                <MdChip>{`${t('common.resolution')}: ${result.width}×${result.height}`}</MdChip>
+                <MdChip>{`${t('common.fps')}: ${result.fps ? result.fps.toFixed(2) : '-'}`}</MdChip>
+                <MdChip>{`${t('common.frames')}: ${result.frameCount}`}</MdChip>
+                <MdChip>{`${t('result.model')}: ${modelLabel}`}</MdChip>
+              </div>
 
               <FrameComparePreview
                 outputPath={result.outputPath}
@@ -247,57 +265,79 @@ export function ResultView({
           )}
         </div>
 
-        <div className="result-right-pane">
+        <div className="result-right-pane action-pane">
           <div className="result-upscale-panel">
-            <Title heading={6}>{t('upscale.panelTitle')}</Title>
+            <h3>{t('upscale.panelTitle')}</h3>
             <div className="result-upscale-row">
-              <Text>{t('upscale.enable')}</Text>
-              <Switch checked={upscaleConfig.enabled} onChange={(value) => onUpscaleConfigChange({ enabled: !!value })} />
-            </div>
-            <div className="result-upscale-field">
-              <Text className="process-field-label">{t('upscale.mode')}</Text>
-              <Select
-                value={upscaleConfig.mode}
-                onChange={(value) => onUpscaleConfigChange({ mode: String(value) as UpscaleConfig['mode'] })}
-                optionList={[
-                  { value: 'upscale_resolution', label: t('upscale.mode.upscale') },
-                  { value: 'enhance_same_resolution', label: t('upscale.mode.sameRes') },
-                ]}
-                disabled={!upscaleConfig.enabled || upscaleTask.state === 'running'}
+              <span>{t('upscale.enable')}</span>
+              <MdSwitch
+                checked={upscaleConfig.enabled}
+                label={t('upscale.enable')}
+                onChange={(value) => onUpscaleConfigChange({ enabled: value })}
               />
             </div>
-            <div className="result-upscale-field">
-              <Text className="process-field-label">{t('upscale.engine')}</Text>
-              <Select
-                value={effectiveEngine}
-                onChange={(value) => onUpscaleConfigChange({ engine: String(value) as UpscaleConfig['engine'] })}
-                optionList={engineOptionsRaw.map((entry) => ({
-                  value: entry.engine,
-                  label: entry.available ? entry.display_name : `${entry.display_name} (${t('upscale.unavailable')})`,
-                  disabled: !entry.available,
-                }))}
-                disabled={!upscaleConfig.enabled || upscaleTask.state === 'running'}
-              />
-              {!effectiveEngineAvailable && (
-                <Text type="tertiary">{effectiveEngineReasonText || t('upscale.engineUnavailableHint')}</Text>
-              )}
-            </div>
-            <div className="result-upscale-field">
-              <Text className="process-field-label">{t('upscale.model')}</Text>
-              <Select
-                value={effectiveModel}
-                onChange={(value) => onUpscaleConfigChange({ modelId: String(value) as UpscaleConfig['modelId'] })}
-                optionList={modelOptions}
-                disabled={!upscaleConfig.enabled || upscaleTask.state === 'running'}
-              />
-            </div>
+            <section className="result-upscale-config-card">
+              <div className="result-upscale-section-head">
+                <span className="result-upscale-section-icon">
+                  <MaterialIcon name="tune" />
+                </span>
+                <h4>{t('upscale.basicConfig')}</h4>
+              </div>
+
+              <div className="result-upscale-form-grid">
+                <div className="result-upscale-field">
+                  <span className="process-field-label">{t('upscale.mode')}</span>
+                  <MdSelect
+                    value={upscaleConfig.mode}
+                    onChange={(value) => onUpscaleConfigChange({ mode: value })}
+                    options={[
+                      { value: 'upscale_resolution', label: t('upscale.mode.upscale') },
+                      { value: 'enhance_same_resolution', label: t('upscale.mode.sameRes') },
+                    ]}
+                    disabled={!upscaleConfig.enabled || upscaleTask.state === 'running'}
+                  />
+                </div>
+
+                <div className="result-upscale-field">
+                  <span className="process-field-label">{t('upscale.engine')}</span>
+                  <MdSelect
+                    value={effectiveEngine}
+                    onChange={(value) => onUpscaleConfigChange({ engine: value })}
+                    options={engineOptionsRaw.map((entry) => ({
+                      value: entry.engine,
+                      label: entry.available ? entry.display_name : `${entry.display_name} (${t('upscale.unavailable')})`,
+                      disabled: !entry.available,
+                    }))}
+                    disabled={!upscaleConfig.enabled || upscaleTask.state === 'running'}
+                  />
+                </div>
+
+                {!effectiveEngineAvailable && (
+                  <div className="result-upscale-inline-status">
+                    <MaterialIcon name="info" />
+                    <span>{effectiveEngineReasonText || t('upscale.engineUnavailableHint')}</span>
+                  </div>
+                )}
+
+              <div className="result-upscale-field">
+                <span className="process-field-label">{t('upscale.model')}</span>
+                <MdSelect
+                  value={effectiveModel}
+                  onChange={(value) => onUpscaleConfigChange({ modelId: value })}
+                  options={modelOptions}
+                  disabled={!upscaleConfig.enabled || upscaleTask.state === 'running'}
+                />
+              </div>
+              </div>
+            </section>
             <div className="result-upscale-model-state">
-              <Space wrap>
-                <Tag color={effectiveModelInstalled ? 'green' : 'orange'}>
+              <div className="button-row wrap">
+                <MdChip tone={effectiveModelInstalled ? 'success' : 'warning'}>
                   {effectiveModelInstalled ? t('upscale.modelInstalled') : t('upscale.modelNotInstalled')}
-                </Tag>
-                <Button
-                  theme="light"
+                </MdChip>
+                <MdButton
+                  variant="tonal"
+                  icon="download"
                   disabled={runningModelDownload && !runningCurrentModelDownload}
                   loading={runningCurrentModelDownload}
                   onClick={() => onStartUpscaleModelDownload(effectiveModel, downloadForce)}
@@ -305,112 +345,147 @@ export function ResultView({
                   {runningCurrentModelDownload
                     ? t('upscale.modelDownloading')
                     : (downloadForce ? t('upscale.modelRedownload') : t('upscale.modelDownload'))}
-                </Button>
-                <Button
-                  theme="light"
-                  type="danger"
+                </MdButton>
+                <MdButton
+                  variant="outlined"
+                  tone="danger"
+                  icon="cancel"
                   disabled={!runningModelDownload}
                   onClick={onCancelUpscaleModelDownload}
                 >
                   {t('settings.modelDownload.cancel')}
-                </Button>
-              </Space>
+                </MdButton>
+              </div>
               {!effectiveModelInstalled && (
-                <Text type="tertiary">{t('upscale.modelNotReadyHint')}</Text>
+                <p className="metadata-text">{t('upscale.modelNotReadyHint')}</p>
               )}
             </div>
-            {upscaleConfig.mode === 'upscale_resolution' ? (
-              <div className="result-upscale-field">
-                <Text className="process-field-label">{t('upscale.target')}</Text>
-                <Select
-                  value={upscaleConfig.targetPreset}
-                  onChange={(value) => onUpscaleConfigChange({ targetPreset: String(value) as UpscaleConfig['targetPreset'] })}
-                  optionList={[
-                    { value: '1080p', label: '1080p' },
-                  ]}
-                  disabled={!upscaleConfig.enabled || upscaleTask.state === 'running'}
-                />
-              </div>
-            ) : (
-              <div className="result-upscale-field">
-                <Text className="process-field-label">{t('upscale.sameResStrength')}</Text>
-                <Select
-                  value={upscaleConfig.sameResStrength}
-                  onChange={(value) => onUpscaleConfigChange({ sameResStrength: String(value) as UpscaleConfig['sameResStrength'] })}
-                  optionList={[
-                    { value: 'x2_then_downscale', label: t('upscale.sameRes.x2') },
-                  ]}
-                  disabled={!upscaleConfig.enabled || upscaleTask.state === 'running'}
-                />
-              </div>
-            )}
-            <div className="result-upscale-field">
-              <Text className="process-field-label">{`${t('upscale.denoise')}: ${upscaleConfig.denoiseStrength.toFixed(2)}`}</Text>
-              <Slider
-                min={0}
-                max={1}
-                step={0.05}
-                value={upscaleConfig.denoiseStrength}
-                onChange={(value) => onUpscaleConfigChange({ denoiseStrength: Number(value) })}
-                disabled={!upscaleConfig.enabled || upscaleTask.state === 'running'}
-              />
-            </div>
-            <div className="result-upscale-row">
-              <Text>{t('upscale.keepAudio')}</Text>
-              <Switch
-                checked={upscaleConfig.keepAudio}
-                onChange={(value) => onUpscaleConfigChange({ keepAudio: !!value })}
-                disabled={!upscaleConfig.enabled || upscaleTask.state === 'running'}
-              />
-            </div>
-
-            <Space className="result-upscale-actions">
-              <Button type="primary" disabled={startDisabled} onClick={onStartUpscale}>
-                {t('upscale.start')}
-              </Button>
-              <Button
-                theme="light"
-                type="danger"
-                disabled={upscaleTask.state !== 'running'}
-                onClick={onCancelUpscale}
+            {upscaleConfig.enabled ? (
+              <button
+                type="button"
+                className="compact-disclosure"
+                aria-expanded={showUpscaleAdvanced}
+                onClick={() => setShowUpscaleAdvanced((value) => !value)}
               >
-                {t('upscale.cancel')}
-              </Button>
-              <Button
-                disabled={upscaleTask.state !== 'success' || !upscaleTask.outputPath}
-                onClick={onOpenUpscaleResult}
-              >
-                {t('upscale.openResult')}
-              </Button>
-            </Space>
+                <span>{t('upscale.target')}</span>
+                <span className="metadata-text">
+                  {upscaleConfig.mode === 'upscale_resolution'
+                    ? upscaleConfig.targetPreset
+                    : t('upscale.sameRes.x2')}
+                </span>
+                <MaterialIcon name={showUpscaleAdvanced ? 'expand_less' : 'expand_more'} />
+              </button>
+            ) : null}
 
-            <div className="result-upscale-progress">
-              <Progress percent={Math.round(upscaleTask.progress * 100)} showInfo />
-              <Text type="tertiary">{upscaleTask.message || t('upscale.status.idle')}</Text>
-              {upscaleTask.state === 'running' && (upscaleTask.segmentTotal || 0) > 0 && (
-                <Text type="tertiary">{`${t('upscale.segmentProgress')}: ${upscaleTask.segmentIndex || 0}/${upscaleTask.segmentTotal || 0}`}</Text>
-              )}
-              {typeof upscaleTask.etaSeconds === 'number' && upscaleTask.state === 'running' && (
-                <Text type="tertiary">{`${t('process.etaLabel')}: ${Math.ceil(upscaleTask.etaSeconds)}s`}</Text>
-              )}
-              {upscaleTask.warning && <Text type="tertiary">{localizedTaskWarning}</Text>}
-              {upscaleTask.error && <Text type="danger">{localizedTaskError}</Text>}
-            </div>
+            {upscaleConfig.enabled && showUpscaleAdvanced ? (
+              <MdTaskPanel icon="instant_mix" title={t('upscale.target')} className="result-upscale-advanced">
+                {upscaleConfig.mode === 'upscale_resolution' ? (
+                  <div className="result-upscale-field">
+                    <MdSelect
+                      value={upscaleConfig.targetPreset}
+                      onChange={(value) => onUpscaleConfigChange({ targetPreset: value })}
+                      options={[
+                        { value: '1080p', label: '1080p' },
+                      ]}
+                      disabled={!upscaleConfig.enabled || upscaleTask.state === 'running'}
+                    />
+                  </div>
+                ) : (
+                  <div className="result-upscale-field">
+                    <span className="process-field-label">{t('upscale.sameResStrength')}</span>
+                    <MdSelect
+                      value={upscaleConfig.sameResStrength}
+                      onChange={(value) => onUpscaleConfigChange({ sameResStrength: value })}
+                      options={[
+                        { value: 'x2_then_downscale', label: t('upscale.sameRes.x2') },
+                      ]}
+                      disabled={!upscaleConfig.enabled || upscaleTask.state === 'running'}
+                    />
+                  </div>
+                )}
+                <div className="result-upscale-field">
+                  <span className="process-field-label">{`${t('upscale.denoise')}: ${upscaleConfig.denoiseStrength.toFixed(2)}`}</span>
+                  <MdSlider
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    value={upscaleConfig.denoiseStrength}
+                    onChange={(value) => onUpscaleConfigChange({ denoiseStrength: Number(value) })}
+                    disabled={!upscaleConfig.enabled || upscaleTask.state === 'running'}
+                  />
+                </div>
+                <div className="result-upscale-row">
+                  <span>{t('upscale.keepAudio')}</span>
+                  <MdSwitch
+                    checked={upscaleConfig.keepAudio}
+                    label={t('upscale.keepAudio')}
+                    onChange={(value) => onUpscaleConfigChange({ keepAudio: value })}
+                    disabled={!upscaleConfig.enabled || upscaleTask.state === 'running'}
+                  />
+                </div>
+              </MdTaskPanel>
+            ) : null}
+
+            {upscaleConfig.enabled ? (
+              <div className="result-upscale-actions">
+                <MdButton variant="filled" icon="auto_awesome" disabled={startDisabled} onClick={onStartUpscale}>
+                  {t('upscale.start')}
+                </MdButton>
+                <MdButton
+                  variant="outlined"
+                  tone="danger"
+                  icon="cancel"
+                  disabled={upscaleTask.state !== 'running'}
+                  onClick={onCancelUpscale}
+                >
+                  {t('upscale.cancel')}
+                </MdButton>
+                <MdButton
+                  variant="tonal"
+                  icon="open_in_new"
+                  disabled={upscaleTask.state !== 'success' || !upscaleTask.outputPath}
+                  onClick={onOpenUpscaleResult}
+                >
+                  {t('upscale.openResult')}
+                </MdButton>
+              </div>
+            ) : null}
+
+            {upscaleConfig.enabled || upscaleTask.state !== 'idle' ? (
+              <div className="result-upscale-progress">
+                <div className="progress-with-value">
+                  <MdLinearProgress value={upscaleTask.progress} />
+                  <span>{Math.round(upscaleTask.progress * 100)}%</span>
+                </div>
+                <p className="metadata-text">{upscaleTask.message || t('upscale.status.idle')}</p>
+                {upscaleTask.state === 'running' && (upscaleTask.segmentTotal || 0) > 0 && (
+                  <p className="metadata-text">{`${t('upscale.segmentProgress')}: ${upscaleTask.segmentIndex || 0}/${upscaleTask.segmentTotal || 0}`}</p>
+                )}
+                {typeof upscaleTask.etaSeconds === 'number' && upscaleTask.state === 'running' && (
+                  <p className="metadata-text">{`${t('process.etaLabel')}: ${Math.ceil(upscaleTask.etaSeconds)}s`}</p>
+                )}
+                {upscaleTask.warning && <p className="metadata-text">{localizedTaskWarning}</p>}
+                {upscaleTask.error && <p className="form-error">{localizedTaskError}</p>}
+              </div>
+            ) : null}
             {(runningModelDownload || upscaleDownloadTask.state === 'failed' || upscaleDownloadTask.state === 'cancelled') && (
               <div className="result-upscale-download-progress">
-                <Progress percent={Math.round((upscaleDownloadTask.progress || 0) * 100)} showInfo />
-                <Text type="tertiary">{upscaleDownloadTask.message}</Text>
+                <div className="progress-with-value">
+                  <MdLinearProgress value={upscaleDownloadTask.progress || 0} />
+                  <span>{Math.round((upscaleDownloadTask.progress || 0) * 100)}%</span>
+                </div>
+                <p className="metadata-text">{upscaleDownloadTask.message}</p>
                 {upscaleDownloadTask.current_file && (
-                  <Text type="tertiary">
+                  <p className="metadata-text">
                     {`${t('settings.modelDownload.currentFile')}: ${upscaleDownloadTask.current_file}`}
-                  </Text>
+                  </p>
                 )}
-                {upscaleDownloadTask.error && <Text type="danger">{upscaleDownloadTask.error}</Text>}
+                {upscaleDownloadTask.error && <p className="form-error">{upscaleDownloadTask.error}</p>}
               </div>
             )}
           </div>
         </div>
       </div>
-    </Card>
+    </MdSurface>
   );
 }

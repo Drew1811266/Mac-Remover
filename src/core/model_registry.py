@@ -3,16 +3,14 @@
 
 作用可以理解为“模型总开关”：
 - 根据 `model_id` 返回对应引擎；
-- ProPainter 不可用时自动回退到 LaMa；
 - 同时把“请求模型 / 实际生效模型 / 警告信息”打包返回给上层。
 """
 
 from __future__ import annotations
 
-import importlib
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 
@@ -20,7 +18,7 @@ from ..utils.logger import logger
 from .remover import WatermarkRemover
 
 
-SUPPORTED_MODEL_IDS = ("lama_roi", "propainter_roi")
+SUPPORTED_MODEL_IDS = ("lama_roi",)
 LEGACY_MODEL_ALIASES = {
     "sttn_roi": "lama_roi",
 }
@@ -115,176 +113,6 @@ class LamaRoiEngine(BaseInpaintEngine):
         return outputs
 
 
-class OptionalAdapterEngine(BaseInpaintEngine):
-    """
-    Adapter engine for optional third-party models.
-
-    If the adapter module cannot be imported or fails at runtime,
-    this engine reports unavailable and callers can fall back to LaMa.
-    """
-
-    adapter_module = ""
-
-    def __init__(self, remover: WatermarkRemover):
-        super().__init__(remover)
-        self._adapter = None
-        self._available = False
-        self._warning = ""
-
-    def load(self) -> None:
-        # 仅首次加载；加载失败后写 warning，交给上层做回退。
-        if self._available:
-            return
-
-        if self._adapter is not None:
-            return
-
-        try:
-            module = importlib.import_module(self.adapter_module)
-            adapter_cls = getattr(module, "Adapter", None)
-            if adapter_cls is None:
-                self._warning = (
-                    f"{self.display_name} adapter missing Adapter class. "
-                    "Falling back to LaMa-ROI."
-                )
-                logger.warning(self._warning)
-                self._adapter = False
-                return
-            self._adapter = adapter_cls()
-            if hasattr(self._adapter, "load"):
-                self._adapter.load()
-            self._available = True
-        except Exception as exc:
-            self._warning = (
-                f"{self.display_name} backend unavailable: {exc}. "
-                "Falling back to LaMa-ROI."
-            )
-            logger.warning(self._warning)
-            self._adapter = False
-            self._available = False
-
-    def inpaint_roi(self, roi: np.ndarray, roi_mask: np.ndarray) -> np.ndarray:
-        # 运行期失败也会降级：标记不可用并抛出异常让上层切换 LaMa。
-        if not self._available or not self._adapter:
-            raise RuntimeError(f"{self.display_name} backend not available")
-        try:
-            return self._adapter.inpaint_roi(roi, roi_mask)
-        except Exception as exc:
-            self._available = False
-            self._warning = (
-                f"{self.display_name} inference failed: {exc}. "
-                "Falling back to LaMa-ROI."
-            )
-            logger.warning(self._warning)
-            raise
-
-    def inpaint_roi_sequence(self, roi_frames, roi_masks, progress_callback=None, **kwargs):
-        if not self._available or not self._adapter:
-            raise RuntimeError(f"{self.display_name} backend not available")
-
-        def _normalize_progress_payload(*cb_args: Any, **cb_kwargs: Any) -> Optional[Dict[str, Any]]:
-            raw = cb_args[0] if cb_args else cb_kwargs.get("progress")
-            if isinstance(raw, dict):
-                payload: Dict[str, Any] = dict(raw)
-                payload["phase"] = str(payload.get("phase") or "infer").strip().lower() or "infer"
-                payload["opaque_infer"] = bool(payload.get("opaque_infer", payload["phase"] == "infer"))
-                return payload
-
-            step_raw: Any = None
-            total_raw: Any = None
-            if len(cb_args) >= 2:
-                step_raw, total_raw = cb_args[0], cb_args[1]
-            elif isinstance(raw, (tuple, list)) and len(raw) >= 2:
-                step_raw, total_raw = raw[0], raw[1]
-            elif cb_kwargs.get("step") is not None and cb_kwargs.get("total") is not None:
-                step_raw, total_raw = cb_kwargs.get("step"), cb_kwargs.get("total")
-
-            if step_raw is not None and total_raw is not None:
-                try:
-                    total = max(1, int(total_raw))
-                    step = min(max(0, int(step_raw)), total)
-                    return {
-                        "phase": "infer",
-                        "step": step,
-                        "total": total,
-                        "progress": float(step) / float(total),
-                        "opaque_infer": True,
-                        "message": f"{self.display_name} infer {step}/{total}",
-                    }
-                except (TypeError, ValueError):
-                    return None
-
-            candidate = cb_kwargs.get("progress", raw)
-            try:
-                ratio = float(candidate)
-            except (TypeError, ValueError):
-                ratio = None
-            if ratio is None:
-                return None
-
-            ratio = min(max(ratio, 0.0), 1.0)
-            return {
-                "phase": "infer",
-                "progress": ratio,
-                "opaque_infer": True,
-                "message": f"{self.display_name} infer {int(round(ratio * 100))}%",
-            }
-
-        def _bridge_progress_callback(*cb_args: Any, **cb_kwargs: Any) -> None:
-            if not progress_callback:
-                return
-            payload = _normalize_progress_payload(*cb_args, **cb_kwargs)
-            if payload is None:
-                return
-            try:
-                progress_callback(payload)
-            except TypeError:
-                # 兼容极少数 adapter 仍使用(step, total) 形式。
-                step = payload.get("step")
-                total = payload.get("total")
-                if step is not None and total is not None:
-                    progress_callback(step, total)
-
-        try:
-            if hasattr(self._adapter, "inpaint_roi_sequence"):
-                try:
-                    return self._adapter.inpaint_roi_sequence(
-                        roi_frames,
-                        roi_masks,
-                        progress_callback=_bridge_progress_callback if progress_callback else None,
-                        **kwargs,
-                    )
-                except TypeError:
-                    return self._adapter.inpaint_roi_sequence(roi_frames, roi_masks)
-            return super().inpaint_roi_sequence(
-                roi_frames,
-                roi_masks,
-                progress_callback=progress_callback,
-                **kwargs,
-            )
-        except Exception as exc:
-            self._available = False
-            self._warning = (
-                f"{self.display_name} inference failed: {exc}. "
-                "Falling back to LaMa-ROI."
-            )
-            logger.warning(self._warning)
-            raise
-
-    def is_available(self) -> bool:
-        return self._available
-
-    def get_warning(self) -> str:
-        return self._warning
-
-
-class ProPainterRoiEngine(OptionalAdapterEngine):
-    """ProPainter 适配引擎。"""
-    model_id = "propainter_roi"
-    display_name = "ProPainter-ROI"
-    adapter_module = "src.core.optional_adapters.propainter_adapter"
-
-
 class ModelRegistry:
     """模型注册与解析入口。"""
     def __init__(self, remover: WatermarkRemover):
@@ -304,8 +132,6 @@ class ModelRegistry:
         """按模型 ID 创建对应引擎实例。"""
         if model_id == "lama_roi":
             return LamaRoiEngine(self._remover)
-        if model_id == "propainter_roi":
-            return ProPainterRoiEngine(self._remover)
         return LamaRoiEngine(self._remover)
 
     def get_engine(self, model_id: str) -> BaseInpaintEngine:

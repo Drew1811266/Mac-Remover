@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Button, Slider, Space, Typography } from '@douyinfe/semi-ui';
-import { pywebviewClient } from '../services/pywebview';
+import { desktopClient } from '../services/desktop';
 import { useI18n } from '../i18n/useI18n';
-
-const { Text } = Typography;
+import { MdButton, MdSlider } from '../material';
 
 export interface FrameComparePreviewProps {
   outputPath: string;
@@ -76,7 +74,7 @@ export function FrameComparePreview({
     const target = sid || sessionIdRef.current;
     if (!target) return;
     try {
-      await pywebviewClient.closeVideoPreviewSession(target);
+      await desktopClient.closeVideoPreviewSession(target);
     } catch {
       // Best effort cleanup.
     }
@@ -92,7 +90,7 @@ export function FrameComparePreview({
     const target = sid || sourceSessionIdRef.current;
     if (!target) return;
     try {
-      await pywebviewClient.closeVideoPreviewSession(target);
+      await desktopClient.closeVideoPreviewSession(target);
     } catch {
       // Best effort cleanup.
     }
@@ -148,7 +146,7 @@ export function FrameComparePreview({
 
       await closeSession();
       await closeSourceSession();
-      const opened = await pywebviewClient.openVideoPreviewSession(
+      const opened = await desktopClient.openVideoPreviewSession(
         outputPath,
         Math.max(15, safeFpsHint),
         decodeMaxWidth,
@@ -168,7 +166,7 @@ export function FrameComparePreview({
 
       if (!sourcePath) return;
 
-      const sourceOpened = await pywebviewClient.openVideoPreviewSession(
+      const sourceOpened = await desktopClient.openVideoPreviewSession(
         sourcePath,
         Math.max(15, safeFpsHint),
         decodeMaxWidth,
@@ -217,21 +215,21 @@ export function FrameComparePreview({
         const useSequentialOutputRead = previousOutputFrame !== null && outputTargetFrame === previousOutputFrame + 1;
 
         const outputFramePromise = useSequentialOutputRead
-          ? pywebviewClient.readVideoPreviewFrame(activeOutputSessionId)
-          : pywebviewClient.readVideoPreviewFrame(activeOutputSessionId, outputTargetFrame);
+          ? desktopClient.readVideoPreviewFrame(activeOutputSessionId)
+          : desktopClient.readVideoPreviewFrame(activeOutputSessionId, outputTargetFrame);
 
         const activeSourceSessionId = sourceSessionIdRef.current;
         const shouldLoadSource = !!activeSourceSessionId && sourcePreviewTotalFrames > 0;
         let sourceTargetFrame = 0;
-        let sourceFramePromise: Promise<Awaited<ReturnType<typeof pywebviewClient.readVideoPreviewFrame>> | null> = Promise.resolve(null);
+        let sourceFramePromise: Promise<Awaited<ReturnType<typeof desktopClient.readVideoPreviewFrame>> | null> = Promise.resolve(null);
 
         if (shouldLoadSource) {
           sourceTargetFrame = mapSourceFrameIndex(outputTargetFrame);
           const previousSourceFrame = lastRenderedSourceFrameRef.current;
           const useSequentialSourceRead = previousSourceFrame !== null && sourceTargetFrame === previousSourceFrame + 1;
           sourceFramePromise = useSequentialSourceRead
-            ? pywebviewClient.readVideoPreviewFrame(activeSourceSessionId)
-            : pywebviewClient.readVideoPreviewFrame(activeSourceSessionId, sourceTargetFrame);
+            ? desktopClient.readVideoPreviewFrame(activeSourceSessionId)
+            : desktopClient.readVideoPreviewFrame(activeSourceSessionId, sourceTargetFrame);
         }
 
         const [outputFrame, sourceFrame] = await Promise.all([outputFramePromise, sourceFramePromise]);
@@ -439,8 +437,9 @@ export function FrameComparePreview({
       </div>
 
       {isVideo && sessionId && (
-        <Space className="result-playback-controls">
-          <Button
+        <div className="result-playback-controls">
+          <MdButton
+            icon={isPlaying ? 'pause' : 'play_arrow'}
             disabled={previewTotalFrames <= 1}
             onClick={() => {
               if (isPlaying) {
@@ -454,9 +453,9 @@ export function FrameComparePreview({
             }}
           >
             {isPlaying ? t('common.pause') : t('common.play')}
-          </Button>
+          </MdButton>
           <div className="result-slider-wrap">
-            <Slider
+            <MdSlider
               min={0}
               max={maxFrame}
               value={Math.min(maxFrame, previewFrameIndex)}
@@ -467,11 +466,11 @@ export function FrameComparePreview({
               disabled={previewTotalFrames <= 1}
             />
           </div>
-          <Text type="tertiary">{`${Math.min(maxFrame, previewFrameIndex) + 1}/${Math.max(1, previewTotalFrames)}`}</Text>
-        </Space>
+          <span className="metadata-text">{`${Math.min(maxFrame, previewFrameIndex) + 1}/${Math.max(1, previewTotalFrames)}`}</span>
+        </div>
       )}
-      {isVideo && previewError && <Text type="danger">{previewError}</Text>}
-      {isVideo && compareWarning && <Text type="tertiary">{compareWarning}</Text>}
+      {isVideo && previewError && <p className="form-error">{previewError}</p>}
+      {isVideo && compareWarning && <p className="metadata-text">{compareWarning}</p>}
     </>
   );
 }

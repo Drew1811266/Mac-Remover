@@ -1,17 +1,25 @@
 // 处理页视图：
 // 左侧预览与播放控制，右侧处理参数与进度展示。
-import { useEffect, useRef, useState } from 'react';
-import { Button, Card, Progress, Select, Slider, Space, Tag, Tooltip, Typography } from '@douyinfe/semi-ui';
-import { IconPause, IconPlay } from '@douyinfe/semi-icons';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AnnotationSegment, VideoMeta } from '../types/annotation';
 import type { AppSettings, DeviceInfoState, ProcessState } from '../types/app';
 import { useI18n } from '../i18n/useI18n';
-
-const { Text, Title } = Typography;
+import {
+  MdButton,
+  MdChip,
+  MdEmptyState,
+  MdLinearProgress,
+  MdSelect,
+  MdSlider,
+  MdStatusMetric,
+  MdSurface,
+  MdTaskPanel,
+} from '../material';
 
 interface ProcessViewProps {
   // 当前视频与预览帧信息。
   videoPath: string;
+  videoUrl: string;
   videoMeta: VideoMeta | null;
   frameImageUrl: string;
   previewFrameWidth?: number;
@@ -36,6 +44,7 @@ interface ProcessViewProps {
 
 export function ProcessView({
   videoPath,
+  videoUrl,
   videoMeta,
   frameImageUrl,
   previewFrameWidth,
@@ -58,7 +67,11 @@ export function ProcessView({
 }: ProcessViewProps) {
   const { t } = useI18n();
   const previewWrapRef = useRef<HTMLDivElement | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const currentFrameRef = useRef(0);
+  const lastSyncedVideoFrameRef = useRef(-1);
   const [previewContainerWidth, setPreviewContainerWidth] = useState(0);
+  const [previewContainerHeight, setPreviewContainerHeight] = useState(0);
   // 预览区域和处理状态的派生数据，统一在视图层计算。
   const frameMax = Math.max(0, (videoMeta?.frame_count ?? 1) - 1);
   const enabledCount = segments.filter((item) => item.enabled !== false).length;
@@ -71,6 +84,11 @@ export function ProcessView({
     : `-- ${t('process.speedUnit')}`;
   const phaseKey = process.phase ? `process.phase.${process.phase}` : 'status.idle';
   const phaseText = t(phaseKey);
+  const playbackFps = Math.max(1, Number(videoMeta?.fps || 24));
+
+  useEffect(() => {
+    currentFrameRef.current = currentFrame;
+  }, [currentFrame]);
 
   useEffect(() => {
     // 监听容器尺寸变化，计算预览可用宽度以维持正确比例。
@@ -80,6 +98,7 @@ export function ProcessView({
     const measure = () => {
       const rect = node.getBoundingClientRect();
       setPreviewContainerWidth(Math.max(0, Math.floor(rect.width)));
+      setPreviewContainerHeight(Math.max(0, Math.floor(rect.height)));
     };
 
     measure();
@@ -99,6 +118,78 @@ export function ProcessView({
     };
   }, []);
 
+  const seekVideoToFrame = useCallback((frame: number) => {
+    const video = videoRef.current;
+    if (!video || !Number.isFinite(playbackFps) || playbackFps <= 0) return;
+    const nextTime = Math.max(0, Math.min(frameMax / playbackFps, frame / playbackFps));
+    if (Number.isFinite(nextTime) && Math.abs(video.currentTime - nextTime) > 0.015) {
+      video.currentTime = nextTime;
+    }
+  }, [frameMax, playbackFps]);
+
+  const syncFrameFromVideo = useCallback((time: number) => {
+    if (!videoPath || !Number.isFinite(time)) return;
+    const nextFrame = Math.max(0, Math.min(frameMax, Math.round(time * playbackFps)));
+    if (nextFrame === lastSyncedVideoFrameRef.current) return;
+    lastSyncedVideoFrameRef.current = nextFrame;
+    onSetCurrentFrame(nextFrame);
+  }, [frameMax, onSetCurrentFrame, playbackFps, videoPath]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!videoUrl || !video) return;
+
+    if (isPlaying) {
+      if (video.paused || video.ended) {
+        seekVideoToFrame(currentFrameRef.current);
+      }
+      void video.play().catch(() => {
+        // The user can press Play again if the platform blocks playback.
+      });
+      return;
+    }
+
+    video.pause();
+    seekVideoToFrame(currentFrameRef.current);
+  }, [isPlaying, seekVideoToFrame, videoUrl]);
+
+  useEffect(() => {
+    if (isPlaying || !videoUrl) return;
+    seekVideoToFrame(currentFrame);
+  }, [currentFrame, isPlaying, seekVideoToFrame, videoUrl]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!videoUrl || !video || !isPlaying) return;
+
+    type VideoFrameCallbackMetadata = { mediaTime?: number };
+    type VideoWithFrameCallback = HTMLVideoElement & {
+      requestVideoFrameCallback?: (
+        callback: (now: number, metadata: VideoFrameCallbackMetadata) => void,
+      ) => number;
+      cancelVideoFrameCallback?: (handle: number) => void;
+    };
+
+    const callbackVideo = video as VideoWithFrameCallback;
+    if (!callbackVideo.requestVideoFrameCallback) return;
+
+    let cancelled = false;
+    let handle = 0;
+    const onVideoFrame = (_now: number, metadata: VideoFrameCallbackMetadata) => {
+      if (cancelled) return;
+      syncFrameFromVideo(typeof metadata.mediaTime === 'number' ? metadata.mediaTime : video.currentTime);
+      handle = callbackVideo.requestVideoFrameCallback?.(onVideoFrame) ?? 0;
+    };
+
+    handle = callbackVideo.requestVideoFrameCallback(onVideoFrame);
+    return () => {
+      cancelled = true;
+      if (handle && callbackVideo.cancelVideoFrameCallback) {
+        callbackVideo.cancelVideoFrameCallback(handle);
+      }
+    };
+  }, [isPlaying, syncFrameFromVideo, videoUrl]);
+
   const sourceWidth = Number(previewFrameWidth && previewFrameWidth > 0 ? previewFrameWidth : (videoMeta?.width ?? 0));
   const sourceHeight = Number(previewFrameHeight && previewFrameHeight > 0 ? previewFrameHeight : (videoMeta?.height ?? 0));
   const dpr = Math.max(1, window.devicePixelRatio || 1);
@@ -107,8 +198,13 @@ export function ProcessView({
   let stageHeight = 0;
   if (sourceWidth > 0 && sourceHeight > 0) {
     const cssNativeWidth = sourceWidth / dpr;
+    const cssNativeHeight = sourceHeight / dpr;
     const widthCap = previewContainerWidth > 0 ? previewContainerWidth : cssNativeWidth;
-    stageWidth = Math.min(cssNativeWidth, widthCap);
+    const heightCap = previewContainerHeight > 0
+      ? Math.max(160, Math.min(cssNativeHeight, previewContainerHeight))
+      : cssNativeHeight;
+    const heightBasedWidthCap = heightCap * (sourceWidth / sourceHeight);
+    stageWidth = Math.min(cssNativeWidth, widthCap, heightBasedWidthCap);
     stageHeight = stageWidth * (sourceHeight / sourceWidth);
   }
 
@@ -131,128 +227,172 @@ export function ProcessView({
   return (
     // 布局：左侧预览，右侧配置与进度。
     <div className="process-layout">
-      <Card className="process-left-card" title={t('process.leftTitle')}>
-        <Space className="process-toolbar" wrap>
-          <Button loading={isSelectingVideo} onClick={onSelectVideo}>
+      <MdSurface className="process-left-card">
+        <div className="surface-header">
+          <div>
+            <h2>{t('process.leftTitle')}</h2>
+            <p>{videoMeta?.basename || t('process.noVideoHint')}</p>
+          </div>
+          <MdButton loading={isSelectingVideo} icon="video_file" variant="filled" onClick={onSelectVideo}>
             {t('common.selectVideo')}
-          </Button>
-          <Tag>{`${t('common.fileName')}: ${videoMeta?.basename || '-'}`}</Tag>
-          <Tag>{`${t('common.resolution')}: ${videoMeta ? `${videoMeta.width}×${videoMeta.height}` : '-'}`}</Tag>
-          <Tag>{`${t('common.fps')}: ${videoMeta?.fps ? videoMeta.fps.toFixed(2) : '-'}`}</Tag>
-          <Tag>{`${t('common.frames')}: ${videoMeta?.frame_count ?? 0}`}</Tag>
-        </Space>
+          </MdButton>
+        </div>
+        <div className="process-toolbar">
+          <MdChip>{`${t('common.fileName')}: ${videoMeta?.basename || '-'}`}</MdChip>
+          <MdChip>{`${t('common.resolution')}: ${videoMeta ? `${videoMeta.width}×${videoMeta.height}` : '-'}`}</MdChip>
+          <MdChip>{`${t('common.fps')}: ${videoMeta?.fps ? videoMeta.fps.toFixed(2) : '-'}`}</MdChip>
+          <MdChip>{`${t('common.frames')}: ${videoMeta?.frame_count ?? 0}`}</MdChip>
+        </div>
 
         <div className="process-preview-wrap" ref={previewWrapRef}>
-          <div className="process-preview-stage" style={previewStageStyle}>
-            {frameImageUrl ? (
+          <div className={`process-preview-stage ${videoUrl || frameImageUrl ? '' : 'is-empty'}`.trim()} style={previewStageStyle}>
+            {videoUrl ? (
+              <video
+                ref={videoRef}
+                src={videoUrl}
+                className="process-preview-video"
+                preload="metadata"
+                playsInline
+                onTimeUpdate={(event) => {
+                  if (!('requestVideoFrameCallback' in HTMLVideoElement.prototype)) {
+                    syncFrameFromVideo(event.currentTarget.currentTime);
+                  }
+                }}
+                onLoadedMetadata={() => seekVideoToFrame(currentFrame)}
+                onEnded={() => {
+                  syncFrameFromVideo(videoRef.current?.duration || frameMax / playbackFps);
+                  if (isPlaying) onTogglePlay();
+                }}
+              />
+            ) : frameImageUrl ? (
               <img src={frameImageUrl} alt="preview" className="process-preview-image" />
             ) : (
-              <div className="process-preview-empty">
-                <Title heading={5}>{t('process.noVideo')}</Title>
-                <Text type="tertiary">{t('process.noVideoHint')}</Text>
-              </div>
+              <MdEmptyState
+                className="process-preview-empty"
+                icon="movie"
+                title={t('process.noVideo')}
+                description={t('process.noVideoHint')}
+                action={(
+                  <MdButton variant="outlined" icon="video_file" loading={isSelectingVideo} onClick={onSelectVideo}>
+                    {t('common.selectVideo')}
+                  </MdButton>
+                )}
+              />
             )}
           </div>
         </div>
 
-        <Space className="process-playback-controls">
-          <Button
-            icon={isPlaying ? <IconPause /> : <IconPlay />}
+        <div className="process-playback-controls">
+          <MdButton
+            icon={isPlaying ? 'pause' : 'play_arrow'}
             disabled={!videoPath}
             onClick={onTogglePlay}
           >
             {isPlaying ? t('common.pause') : t('common.play')}
-          </Button>
+          </MdButton>
           <div className="process-slider-wrap">
-            <Slider
-              key={sliderKey}
+            <MdSlider
               min={0}
               max={frameMax}
+              ariaLabel={sliderKey}
               value={sliderValue}
-              onChange={(value) => onSetCurrentFrame(Number(value))}
+              onChange={(value) => {
+                const nextFrame = Number(value);
+                seekVideoToFrame(nextFrame);
+                onSetCurrentFrame(nextFrame);
+              }}
               disabled={!videoPath}
             />
           </div>
-          <Text type="tertiary">{`${sliderValue}/${frameMax}`}</Text>
-        </Space>
-      </Card>
+          <span className="metadata-text">{`${sliderValue}/${frameMax}`}</span>
+        </div>
+      </MdSurface>
 
-      <Card className="process-right-card" title={t('process.rightTitle')}>
-        {!hasEnabledSegments && (
-          <div className="process-warning-box">
-            <Text>{t('process.noSegmentsTip')}</Text>
-            <Button size="small" onClick={onGoAnnotate}>
-              {t('process.goAnnotate')}
-            </Button>
+      <MdSurface className="process-right-card supporting-pane">
+        <div className="surface-header">
+          <div>
+            <h2>{t('process.rightTitle')}</h2>
+            <p>{`${enabledCount} ${t('annotation.manager')}`}</p>
           </div>
-        )}
-
-        <div className="process-field">
-          <Text className="process-field-label">{t('process.outputPath')}</Text>
-          <Space align="center" className="process-output-row">
-            <Text ellipsis={{ showTooltip: true }} className="process-output-path-text">
-              {settings.outputPath || '-'}
-            </Text>
-            <Button size="small" onClick={onSelectOutputFolder}>
-              {t('common.browse')}
-            </Button>
-          </Space>
         </div>
+        <div className="process-task-stack">
+          {!hasEnabledSegments && (
+            <div className="process-warning-box">
+              <span>{t('process.noSegmentsTip')}</span>
+              <MdButton variant="text" icon="ink_highlighter" onClick={onGoAnnotate}>
+                {t('process.goAnnotate')}
+              </MdButton>
+            </div>
+          )}
 
-        <div className="process-field">
-          <Text className="process-field-label">{t('process.model')}</Text>
-          <Select
-            value={settings.modelId}
-            onChange={(value) => onChangeModelId(String(value) as AppSettings['modelId'])}
-            optionList={[
-              { label: t('process.model.lama'), value: 'lama_roi' },
-              { label: t('process.model.propainter'), value: 'propainter_roi' },
-            ]}
-          />
-          <Text className="process-field-help" type="tertiary">
-            <Tooltip content={t('process.model.hint')}>
-              <span>{t('process.model.hintShort')}</span>
-            </Tooltip>
-          </Text>
-        </div>
+          <MdTaskPanel icon="folder_open" title={t('process.outputPath')}>
+            <div className="process-output-row">
+              <span className="process-output-path-text" title={settings.outputPath || '-'}>
+                {settings.outputPath || '-'}
+              </span>
+              <MdButton variant="outlined" icon="folder_open" onClick={onSelectOutputFolder}>
+                {t('common.browse')}
+              </MdButton>
+            </div>
+          </MdTaskPanel>
 
-        <div className="process-field">
-          <Space>
-            <Button
-              type="primary"
-              disabled={!videoPath || process.isProcessing}
-              onClick={onStartProcessing}
-            >
-              {t('common.start')}
-            </Button>
-            <Button
-              type="danger"
-              theme="light"
-              disabled={!process.isProcessing}
-              onClick={onStopProcessing}
-            >
-              {t('common.stop')}
-            </Button>
-          </Space>
-        </div>
+          <MdTaskPanel icon="model_training" title={t('process.model')} subtitle={t('process.model.hintShort')}>
+            <MdSelect
+              value={settings.modelId}
+              onChange={(value) => onChangeModelId(value)}
+              options={[
+                { label: t('process.model.lama'), value: 'lama_roi' },
+              ]}
+            />
+            <span className="process-field-help" title={t('process.model.hint')}>
+              {t('process.model.hint')}
+            </span>
+          </MdTaskPanel>
 
-        <div className="process-field">
-          <Text className="process-field-label">{t('process.progress')}</Text>
-          <Progress percent={Math.round(process.progress * 100)} showInfo />
-          <Space className="process-progress-details" wrap>
-            <Text type="tertiary">{`${t('process.etaLabel')}: ${etaText}`}</Text>
-            <Text type="tertiary">{`${t('process.speedLabel')}: ${speedText}`}</Text>
-            <Text type="tertiary">{`${t('process.phaseLabel')}: ${phaseText}`}</Text>
-          </Space>
-        </div>
+          <MdTaskPanel
+            icon="speed"
+            title={t('process.progress')}
+            footer={(
+              <div className="button-row">
+                <MdButton
+                  variant="filled"
+                  icon="play_arrow"
+                  disabled={!videoPath || process.isProcessing}
+                  onClick={onStartProcessing}
+                >
+                  {t('common.start')}
+                </MdButton>
+                <MdButton
+                  variant="outlined"
+                  tone="danger"
+                  icon="stop"
+                  disabled={!process.isProcessing}
+                  onClick={onStopProcessing}
+                >
+                  {t('common.stop')}
+                </MdButton>
+              </div>
+            )}
+          >
+            <div className="progress-with-value">
+              <MdLinearProgress value={process.progress} />
+              <span>{Math.round(process.progress * 100)}%</span>
+            </div>
+            <div className="process-progress-details">
+              <span>{`${t('process.etaLabel')}: ${etaText}`}</span>
+              <span>{`${t('process.speedLabel')}: ${speedText}`}</span>
+              <span>{`${t('process.phaseLabel')}: ${phaseText}`}</span>
+            </div>
+          </MdTaskPanel>
 
-        <div className="process-meta-box">
-          <Text>{`${t('process.status')}: ${process.statusMessage || t('status.idle')}`}</Text>
-          <Text>{`${t('common.frames')}: ${process.processedFrames}/${process.totalFrames}`}</Text>
-          <Text>{`${t('process.device')}: ${deviceInfo.device}`}</Text>
-          <Text>{`${t('process.memory')}: ${deviceInfo.memory}`}</Text>
+          <div className="process-meta-box">
+            <MdStatusMetric label={t('process.status')} value={process.statusMessage || t('status.idle')} />
+            <MdStatusMetric label={t('common.frames')} value={`${process.processedFrames}/${process.totalFrames}`} />
+            <MdStatusMetric label={t('process.device')} value={deviceInfo.device} />
+            <MdStatusMetric label={t('process.memory')} value={deviceInfo.memory} />
+          </div>
         </div>
-      </Card>
+      </MdSurface>
     </div>
   );
 }

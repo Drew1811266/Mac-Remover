@@ -833,7 +833,7 @@ class API:
                 'success': False,
                 'error': (
                     "settings.output_quality is removed. Use settings.model_id "
-                    "('lama_roi' | 'propainter_roi')."
+                    "('lama_roi')."
                 ),
             }
 

@@ -1,15 +1,11 @@
 // 应用主壳组件：
 // 负责串联“处理页 / 打标页 / 结果页 / 设置侧栏”，
-// 同时管理前端与 pywebview 后端的主要交互流程。
+// 同时管理前端与桌面后端的主要交互流程。
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Button, ConfigProvider, Layout, SideSheet, Toast, Typography } from '@douyinfe/semi-ui';
-import zhCN from '@douyinfe/semi-ui/lib/es/locale/source/zh_CN';
-import enUS from '@douyinfe/semi-ui/lib/es/locale/source/en_US';
-import { IconBulb, IconSetting } from '@douyinfe/semi-icons';
 
 import { AnnotationWorkspace } from './workspace/AnnotationWorkspace';
 import {
-  pywebviewClient,
+  desktopClient,
   toFileUrl,
   type BackendSettingsResult,
   type ModelDownloadEntry,
@@ -18,7 +14,7 @@ import {
   type UpscaleModelDownloadEntry,
   type UpscaleModelDownloadTask,
   type UpscaleTaskStatusResult,
-} from './services/pywebview';
+} from './services/desktop';
 import { useWorkspaceStore } from './store/workspace';
 import { DEFAULT_SETTINGS, useAppStore } from './store/app';
 import type { VideoMeta } from './types/annotation';
@@ -36,16 +32,16 @@ import { ResultView } from './views/ResultView';
 import { ManualView } from './views/ManualView';
 import { SettingsView } from './views/SettingsView';
 import { UpscaleView } from './views/UpscaleView';
-
-const { Header, Content } = Layout;
-const { Title } = Typography;
+import { applyDocumentTheme } from './design/theme';
+import { MaterialIcon, MdIconButton } from './material';
+import { notify, SnackbarHost } from './material/snackbar';
 
 // 顶部导航流程顺序，决定按钮展示和箭头激活态。
-const NAV_ITEMS: Array<{ key: MainView; labelKey: string }> = [
-  { key: 'process', labelKey: 'nav.process' },
-  { key: 'annotate', labelKey: 'nav.annotate' },
-  { key: 'result', labelKey: 'nav.result' },
-  { key: 'upscale', labelKey: 'nav.upscale' },
+const NAV_ITEMS: Array<{ key: MainView; labelKey: string; icon: string }> = [
+  { key: 'process', labelKey: 'nav.process', icon: 'movie_edit' },
+  { key: 'annotate', labelKey: 'nav.annotate', icon: 'ink_highlighter' },
+  { key: 'result', labelKey: 'nav.result', icon: 'compare' },
+  { key: 'upscale', labelKey: 'nav.upscale', icon: 'auto_awesome' },
 ];
 
 const EMPTY_META: VideoMeta = {
@@ -89,10 +85,7 @@ function normalizeSettingsFromBackend(raw: BackendSettingsResult): AppSettings {
   const language = raw.language === 'en' ? 'en' : 'zh';
   const theme = raw.theme === 'dark' ? 'dark' : 'light';
   const modelRaw = String(raw.output?.model_id || '').toLowerCase();
-  const modelId =
-    modelRaw === 'lama_roi' || modelRaw === 'propainter_roi'
-      ? modelRaw
-      : 'lama_roi';
+  const modelId = modelRaw === 'lama_roi' ? modelRaw : 'lama_roi';
 
   return {
     ...DEFAULT_SETTINGS,
@@ -116,7 +109,6 @@ function normalizeStatusText(raw: string, t: (key: string) => string): string {
   }
   if (
     lower.includes('lama infer')
-    || lower.includes('propainter infer')
     || lower.includes('inference')
   ) {
     return t('process.inferEstimated');
@@ -141,12 +133,8 @@ function basename(path: string): string {
   return parts[parts.length - 1] ?? path;
 }
 
-function normalizeModelId(value: unknown): AppSettings['modelId'] {
+function normalizeModelId(_value: unknown): AppSettings['modelId'] {
   // 模型 ID 白名单校验，非法值一律回退到默认模型。
-  const raw = String(value ?? '').toLowerCase();
-  if (raw === 'lama_roi' || raw === 'propainter_roi') {
-    return raw;
-  }
   return 'lama_roi';
 }
 
@@ -163,11 +151,7 @@ function normalizeDownloadTask(raw: Partial<ModelDownloadTask> | null | undefine
     : 'idle';
 
   const modelRaw = String(raw?.model_id || '').toLowerCase();
-  const modelId: ModelDownloadTask['model_id'] = (
-    modelRaw === 'lama_roi' || modelRaw === 'propainter_roi'
-  )
-    ? modelRaw
-    : '';
+  const modelId: ModelDownloadTask['model_id'] = modelRaw === 'lama_roi' ? modelRaw : '';
 
   return {
     state,
@@ -300,7 +284,12 @@ function normalizeUpscaleTask(raw: UpscaleTaskStatusResult['task'] | undefined):
 function localizeSeedVRError(message: string, t: (key: string) => string): string {
   const text = String(message || '');
   const lower = text.toLowerCase();
-  if (lower.includes('real-esrgan runtime') || lower.includes('realesrgan runtime')) {
+  if (
+    lower.includes('real-esrgan runtime') ||
+    lower.includes('realesrgan runtime') ||
+    lower.includes('realesrgan native') ||
+    lower.includes('real-esrgan native')
+  ) {
     return t('upscale.realesrgan.runtimeMissing');
   }
   if (lower.includes('unsupported real-esrgan model_id')) {
@@ -329,7 +318,11 @@ function localizeSeedVRError(message: string, t: (key: string) => string): strin
   if (lower.includes('phase=model_warmup')) return t('upscale.seedvr.phase.warmup');
   if (lower.includes('phase=chunk_infer')) return t('upscale.seedvr.phase.chunkInfer');
   if (lower.includes('phase=flush_output')) return t('upscale.seedvr.phase.flushOutput');
-  if (lower.includes('python 3.12') || lower.includes('seedvr runtime')) {
+  if (
+    lower.includes('seedvr runtime') ||
+    lower.includes('seedvr native') ||
+    lower.includes('gguf runner')
+  ) {
     return t('upscale.seedvr.runtimeMissing');
   }
   if (lower.includes('requires at least') && lower.includes('memory')) {
@@ -405,7 +398,7 @@ export default function App() {
   const upscaleDefaultsAppliedRef = useRef(false);
 
   // 全局状态（zustand）读取：应用级状态 + 打标工作区状态。
-  const { t, language } = useI18n();
+  const { t } = useI18n();
   const tRef = useRef(t);
   const view = useAppStore((state) => state.view);
   const settings = useAppStore((state) => state.settings);
@@ -422,6 +415,7 @@ export default function App() {
   const rollbackSettings = useAppStore((state) => state.rollbackSettings);
   const setDeviceInfo = useAppStore((state) => state.setDeviceInfo);
   const updateProcess = useAppStore((state) => state.updateProcess);
+  const resetProcess = useAppStore((state) => state.resetProcess);
   const setResult = useAppStore((state) => state.setResult);
   const clearResult = useAppStore((state) => state.clearResult);
   const updateUpscaleConfig = useAppStore((state) => state.updateUpscaleConfig);
@@ -442,9 +436,11 @@ export default function App() {
   const clearSegments = useWorkspaceStore((state) => state.clearSegments);
 
   const frameMax = useMemo(() => Math.max(0, (videoMeta?.frame_count ?? 1) - 1), [videoMeta?.frame_count]);
-  const fps = Math.max(1, videoMeta?.fps ?? 24);
-  const semiLocale = language === 'en' ? enUS : zhCN;
-  const currentNavIndex = useMemo(() => NAV_ITEMS.findIndex((item) => item.key === view), [view]);
+  const sourceVideoUrl = useMemo(() => (videoPath ? toFileUrl(videoPath) : ''), [videoPath]);
+  const isMacTitlebar = useMemo(() => {
+    if (typeof navigator === 'undefined') return false;
+    return /Mac/i.test(`${navigator.platform} ${navigator.userAgent}`);
+  }, []);
 
   // 让异步回调里也能拿到最新翻译函数，避免闭包旧值问题。
   useEffect(() => {
@@ -461,8 +457,7 @@ export default function App() {
 
   useEffect(() => {
     // 通过 data 属性驱动全局主题与页面语言。
-    document.body.setAttribute('theme-mode', settings.theme);
-    document.documentElement.lang = settings.language === 'en' ? 'en' : 'zh-CN';
+    applyDocumentTheme(settings.theme, settings.language);
   }, [settings.theme, settings.language]);
 
   const closePreviewSession = useCallback(async (sid?: string) => {
@@ -470,7 +465,7 @@ export default function App() {
     const target = sid ?? previewSessionIdRef.current;
     if (!target) return;
     try {
-      await pywebviewClient.closeVideoPreviewSession(target);
+      await desktopClient.closeVideoPreviewSession(target);
     } catch {
       // Best effort cleanup.
     }
@@ -489,8 +484,8 @@ export default function App() {
   }, [closePreviewSession, previewSessionId]);
 
   useEffect(() => {
-    // 在 process/annotate 视图之外暂停帧拉取队列。
-    if ((view !== 'process' && view !== 'annotate') || !previewSessionId) {
+    // 抽帧队列只服务需要逐帧精度的标注页；导入页播放使用原生 video 解码。
+    if (view !== 'annotate' || !previewSessionId) {
       activeSessionRef.current = '';
       pendingFrameRef.current = null;
       lastRenderedFrameRef.current = null;
@@ -504,7 +499,7 @@ export default function App() {
     // 预览帧“泵”：串行拉取并更新画面，避免并发请求打乱顺序。
     if (frameFetchInFlightRef.current) return;
     const sessionId = activeSessionRef.current;
-    if (!sessionId || (view !== 'process' && view !== 'annotate')) return;
+    if (!sessionId || view !== 'annotate') return;
 
     frameFetchInFlightRef.current = true;
     try {
@@ -517,8 +512,8 @@ export default function App() {
         const useSequentialRead = previousFrame !== null && frameToFetch === previousFrame + 1;
         const resultFrame = useSequentialRead
           // 连续播放时走顺序读取，减少随机 seek 开销。
-          ? await pywebviewClient.readVideoPreviewFrame(sessionId)
-          : await pywebviewClient.readVideoPreviewFrame(sessionId, frameToFetch);
+          ? await desktopClient.readVideoPreviewFrame(sessionId)
+          : await desktopClient.readVideoPreviewFrame(sessionId, frameToFetch);
 
         if (sessionId !== activeSessionRef.current) break;
         if (resultFrame.success && resultFrame.frame_url) {
@@ -540,20 +535,10 @@ export default function App() {
 
   useEffect(() => {
     // 当前帧变化时触发一次帧拉取请求。
-    if ((view !== 'process' && view !== 'annotate') || !previewSessionId) return;
+    if (view !== 'annotate' || !previewSessionId) return;
     pendingFrameRef.current = currentFrame;
     void pumpPreviewFrame();
   }, [currentFrame, previewSessionId, pumpPreviewFrame, view]);
-
-  useEffect(() => {
-    // 处理页播放循环：按视频 fps 驱动 currentFrame 自增。
-    if (view !== 'process' || !isProcessPlaying) return;
-    const timer = window.setInterval(() => {
-      const next = (currentFrame + 1) > frameMax ? frameMax : currentFrame + 1;
-      setCurrentFrame(next);
-    }, Math.max(30, Math.round(1000 / fps)));
-    return () => window.clearInterval(timer);
-  }, [currentFrame, fps, frameMax, isProcessPlaying, setCurrentFrame, view]);
 
   useEffect(() => {
     if (view === 'process' && currentFrame >= frameMax && isProcessPlaying) {
@@ -570,11 +555,11 @@ export default function App() {
   const loadSettings = useCallback(async () => {
     // 启动时读取后端持久化设置。
     try {
-      const response = await pywebviewClient.getSettings();
+      const response = await desktopClient.getSettings();
       const normalized = normalizeSettingsFromBackend(response);
       setSettingsFromBackend(normalized);
     } catch {
-      Toast.error(tRef.current('toast.loadSettingsFailed'));
+      notify.error(tRef.current('toast.loadSettingsFailed'));
     }
   }, [setSettingsFromBackend]);
 
@@ -582,7 +567,7 @@ export default function App() {
     // 周期刷新设备信息，处理期间也能看到内存变化。
     if (isSelectingVideo) return;
     try {
-      const info = await pywebviewClient.getDeviceInfo();
+      const info = await desktopClient.getDeviceInfo();
       setDeviceInfo({
         device: info.device,
         memory: info.memory,
@@ -596,7 +581,7 @@ export default function App() {
   const refreshModelDownloadStatus = useCallback(async () => {
     // 拉取模型下载列表和任务状态，并处理状态变化提示。
     try {
-      const response = await pywebviewClient.getModelDownloadStatus();
+      const response = await desktopClient.getModelDownloadStatus();
       if (!response.success) {
         return;
       }
@@ -604,11 +589,7 @@ export default function App() {
       const normalizedModels: ModelDownloadEntry[] = (Array.isArray(response.models) ? response.models : [])
         .map((entry) => {
           const rawModelId = String(entry?.model_id || '').toLowerCase();
-          const model_id: AppSettings['modelId'] = (
-            rawModelId === 'lama_roi' || rawModelId === 'propainter_roi'
-          )
-            ? rawModelId
-            : 'lama_roi';
+          const model_id: AppSettings['modelId'] = rawModelId === 'lama_roi' ? rawModelId : 'lama_roi';
 
           return {
             ...entry,
@@ -629,11 +610,11 @@ export default function App() {
       // 只在 running -> 终态 时弹一次结果提示，避免重复通知。
       if (previousState === 'running') {
         if (nextTask.state === 'success') {
-          Toast.success(tRef.current('toast.modelDownloadSuccess'));
+          notify.success(tRef.current('toast.modelDownloadSuccess'));
         } else if (nextTask.state === 'failed') {
-          Toast.error(`${tRef.current('toast.modelDownloadFailed')}: ${nextTask.error || nextTask.message}`);
+          notify.error(`${tRef.current('toast.modelDownloadFailed')}: ${nextTask.error || nextTask.message}`);
         } else if (nextTask.state === 'cancelled') {
-          Toast.info(tRef.current('toast.modelDownloadCancelled'));
+          notify.info(tRef.current('toast.modelDownloadCancelled'));
         }
       }
       previousDownloadStateRef.current = nextTask.state;
@@ -645,7 +626,7 @@ export default function App() {
   const loadUpscaleCapabilities = useCallback(async (forceRefresh = false) => {
     // 获取 AI 放大能力列表（引擎/模型/默认参数）。
     try {
-      const response = await pywebviewClient.getUpscaleCapabilities(forceRefresh);
+      const response = await desktopClient.getUpscaleCapabilities(forceRefresh);
       if (!response.success) {
         setUpscaleCapabilities(null);
         return;
@@ -671,7 +652,7 @@ export default function App() {
   const refreshUpscaleModelDownloadStatus = useCallback(async () => {
     // 拉取 AI 放大模型下载状态，并在终态时刷新能力列表。
     try {
-      const response = await pywebviewClient.getUpscaleModelDownloadStatus();
+      const response = await desktopClient.getUpscaleModelDownloadStatus();
       if (!response.success) {
         return;
       }
@@ -697,12 +678,12 @@ export default function App() {
       const previousState = previousUpscaleDownloadStateRef.current;
       if (previousState === 'running') {
         if (nextTask.state === 'success') {
-          Toast.success(tRef.current('toast.upscaleModelDownloadSuccess'));
+          notify.success(tRef.current('toast.upscaleModelDownloadSuccess'));
           void loadUpscaleCapabilities(true);
         } else if (nextTask.state === 'failed') {
-          Toast.error(`${tRef.current('toast.upscaleModelDownloadFailed')}: ${nextTask.error || nextTask.message}`);
+          notify.error(`${tRef.current('toast.upscaleModelDownloadFailed')}: ${nextTask.error || nextTask.message}`);
         } else if (nextTask.state === 'cancelled') {
-          Toast.info(tRef.current('toast.upscaleModelDownloadCancelled'));
+          notify.info(tRef.current('toast.upscaleModelDownloadCancelled'));
         }
       }
       previousUpscaleDownloadStateRef.current = nextTask.state;
@@ -714,7 +695,7 @@ export default function App() {
   const refreshUpscaleTaskStatus = useCallback(async () => {
     // 拉取放大任务状态，并在成功后刷新“AI 放大结果”页数据。
     try {
-      const response = await pywebviewClient.getUpscaleTaskStatus();
+      const response = await desktopClient.getUpscaleTaskStatus();
       if (!response.success) return;
       const task = normalizeUpscaleTask(response.task);
       setUpscaleTask(task);
@@ -723,7 +704,7 @@ export default function App() {
       if (task.state === 'success' && task.outputPath && lastUpscaleOutputPathRef.current !== task.outputPath) {
         lastUpscaleOutputPathRef.current = task.outputPath;
         try {
-          const mediaInfo = await pywebviewClient.getMediaInfo(task.outputPath);
+          const mediaInfo = await desktopClient.getMediaInfo(task.outputPath);
           const playbackPath = task.previewPath || task.outputPath;
           setUpscaleResult({
             outputPath: task.outputPath,
@@ -869,9 +850,9 @@ export default function App() {
     if (!targetPath) return;
 
     try {
-      const loaded = await pywebviewClient.loadAnnotations(targetPath);
+      const loaded = await desktopClient.loadAnnotations(targetPath);
       if (!loaded.success) {
-        Toast.error(loaded.error ?? t('toast.loadAnnotationsFailed'));
+        notify.error(loaded.error ?? t('toast.loadAnnotationsFailed'));
         return;
       }
       replaceSegments(Array.isArray(loaded.segments) ? loaded.segments : []);
@@ -879,10 +860,10 @@ export default function App() {
         setVideoMeta(loaded.video_meta);
       }
       if (loaded.warning) {
-        Toast.warning(loaded.warning);
+        notify.warning(loaded.warning);
       }
     } catch {
-      Toast.error(t('toast.loadAnnotationsFailed'));
+      notify.error(t('toast.loadAnnotationsFailed'));
     }
   }, [replaceSegments, setVideoMeta, t, videoPath]);
 
@@ -890,19 +871,19 @@ export default function App() {
     // 把当前工作区标记段保存到磁盘 sidecar。
     if (!videoPath) return;
     try {
-      const saved = await pywebviewClient.saveAnnotations({
+      const saved = await desktopClient.saveAnnotations({
         video_path: videoPath,
         segments,
         video_meta: videoMeta ?? EMPTY_META,
       });
       if (!saved.success) {
-        Toast.error(saved.error ?? t('toast.saveAnnotationsFailed'));
+        notify.error(saved.error ?? t('toast.saveAnnotationsFailed'));
         return;
       }
       replaceSegments(Array.isArray(saved.segments) ? saved.segments : segments);
-      Toast.success(t('toast.saveAnnotationsSuccess'));
+      notify.success(t('toast.saveAnnotationsSuccess'));
     } catch {
-      Toast.error(t('toast.saveAnnotationsFailed'));
+      notify.error(t('toast.saveAnnotationsFailed'));
     }
   }, [replaceSegments, segments, t, videoMeta, videoPath]);
 
@@ -911,14 +892,14 @@ export default function App() {
     clearSegments();
     if (!videoPath) return;
     try {
-      const resultDelete = await pywebviewClient.deleteAnnotations(videoPath);
+      const resultDelete = await desktopClient.deleteAnnotations(videoPath);
       if (!resultDelete.success) {
-        Toast.warning(resultDelete.error ?? t('toast.deleteAnnotationsFailed'));
+        notify.warning(resultDelete.error ?? t('toast.deleteAnnotationsFailed'));
         return;
       }
-      Toast.success(t('toast.deleteAnnotationsSuccess'));
+      notify.success(t('toast.deleteAnnotationsSuccess'));
     } catch {
-      Toast.warning(t('toast.deleteAnnotationsFailed'));
+      notify.warning(t('toast.deleteAnnotationsFailed'));
     }
   }, [clearSegments, t, videoPath]);
 
@@ -927,10 +908,10 @@ export default function App() {
     const startedAt = Date.now();
 
     while (true) {
-      const resultDialog = await pywebviewClient.pollDialogResult(requestId);
+      const resultDialog = await desktopClient.pollDialogResult(requestId);
       if (resultDialog.done) {
         try {
-          await pywebviewClient.clearDialogResult(requestId);
+          await desktopClient.clearDialogResult(requestId);
         } catch {
           // Best effort cleanup.
         }
@@ -946,7 +927,7 @@ export default function App() {
 
       if (Date.now() - startedAt > timeoutMs) {
         try {
-          await pywebviewClient.clearDialogResult(requestId);
+          await desktopClient.clearDialogResult(requestId);
         } catch {
           // Best effort cleanup.
         }
@@ -960,13 +941,13 @@ export default function App() {
   const ensurePreviewSession = useCallback(async (path: string, fpsHint?: number): Promise<string> => {
     // 懒创建处理页预览会话，已有会话时直接复用。
     if (previewSessionIdRef.current) return previewSessionIdRef.current;
-    const session = await pywebviewClient.openVideoPreviewSession(
+    const session = await desktopClient.openVideoPreviewSession(
       path,
       Math.max(15, Math.round(fpsHint || 24)),
       1280,
     );
     if (!session.success || !session.session_id) {
-      Toast.error(session.error ?? tRef.current('toast.previewSessionFailed'));
+      notify.error(session.error ?? tRef.current('toast.previewSessionFailed'));
       return '';
     }
     previewSessionIdRef.current = session.session_id;
@@ -978,7 +959,7 @@ export default function App() {
 
   useEffect(() => {
     if (!videoPath) return;
-    if (view !== 'process' && view !== 'annotate') return;
+    if (view !== 'annotate') return;
     if (previewSessionIdRef.current) return;
     void ensurePreviewSession(videoPath, videoMeta?.fps);
   }, [ensurePreviewSession, videoMeta?.fps, videoPath, view]);
@@ -988,7 +969,7 @@ export default function App() {
     if (isSelectingVideo) return;
     setIsSelectingVideo(true);
     try {
-      const begin = await pywebviewClient.beginSelectFile();
+      const begin = await desktopClient.beginSelectFile();
       if (!begin.success || !begin.request_id) {
         throw new Error(begin.error || t('toast.dialogFailed'));
       }
@@ -996,9 +977,9 @@ export default function App() {
       const pickedTimed = await waitForDialogResult(begin.request_id);
       if (!pickedTimed?.path) return;
 
-      const mediaInfo = await pywebviewClient.getMediaInfo(pickedTimed.path);
+      const mediaInfo = await desktopClient.getMediaInfo(pickedTimed.path);
       if (!mediaInfo.success || mediaInfo.type !== 'video') {
-        Toast.warning(t('toast.selectVideoFirst'));
+        notify.warning(t('toast.selectVideoFirst'));
         return;
       }
 
@@ -1016,6 +997,7 @@ export default function App() {
 
       await closePreviewSession();
       clearSegments();
+      resetProcess();
       clearResult();
       clearUpscaleResult();
       resetUpscaleTask();
@@ -1026,17 +1008,12 @@ export default function App() {
       setFrameImageUrl('');
       setIsProcessPlaying(false);
 
-      const sid = await ensurePreviewSession(pickedTimed.path, meta.fps);
-      if (!sid) {
-        return;
-      }
-
       await loadAnnotations(pickedTimed.path);
       setView('process');
-      Toast.success(t('toast.videoImported'));
+      notify.success(t('toast.videoImported'));
     } catch (error) {
       const msg = (error as Error).message || t('toast.selectVideoFirst');
-      Toast.error(msg);
+      notify.error(msg);
     } finally {
       setIsSelectingVideo(false);
     }
@@ -1045,9 +1022,9 @@ export default function App() {
     clearUpscaleResult,
     clearSegments,
     closePreviewSession,
-    ensurePreviewSession,
     isSelectingVideo,
     loadAnnotations,
+    resetProcess,
     resetUpscaleTask,
     setCurrentFrame,
     setVideoMeta,
@@ -1060,7 +1037,7 @@ export default function App() {
   const selectOutputFolder = useCallback(async () => {
     // 选择输出目录并更新设置草稿。
     try {
-      const begin = await pywebviewClient.beginSelectFolder();
+      const begin = await desktopClient.beginSelectFolder();
       if (!begin.success || !begin.request_id) {
         throw new Error(begin.error || t('toast.dialogFailed'));
       }
@@ -1071,16 +1048,16 @@ export default function App() {
       }
     } catch (error) {
       const msg = (error as Error).message || t('toast.dialogFailed');
-      Toast.error(msg);
+      notify.error(msg);
     }
   }, [t, updateSettings, waitForDialogResult]);
 
   const startModelDownload = useCallback(async (modelId: AppSettings['modelId'], force: boolean) => {
     // 启动模型下载，并立即把前端状态切到 running。
     try {
-      const response = await pywebviewClient.startModelDownload(modelId, force);
+      const response = await desktopClient.startModelDownload(modelId, force);
       if (!response.success) {
-        Toast.error(response.error || t('toast.modelDownloadFailed'));
+        notify.error(response.error || t('toast.modelDownloadFailed'));
         return;
       }
 
@@ -1093,35 +1070,35 @@ export default function App() {
         error: '',
       }));
       setIsPollingDownload(true);
-      Toast.info(t('toast.modelDownloadStart'));
+      notify.info(t('toast.modelDownloadStart'));
       await refreshModelDownloadStatus();
     } catch {
-      Toast.error(t('toast.modelDownloadFailed'));
+      notify.error(t('toast.modelDownloadFailed'));
     }
   }, [refreshModelDownloadStatus, t]);
 
   const cancelModelDownload = useCallback(async () => {
     // 请求取消模型下载，后续状态由轮询结果驱动。
     try {
-      const response = await pywebviewClient.cancelModelDownload();
+      const response = await desktopClient.cancelModelDownload();
       if (!response.success) {
-        Toast.error(response.error || t('toast.modelDownloadFailed'));
+        notify.error(response.error || t('toast.modelDownloadFailed'));
         return;
       }
       setIsPollingDownload(true);
-      Toast.info(t('toast.modelDownloadCancelRequested'));
+      notify.info(t('toast.modelDownloadCancelRequested'));
       await refreshModelDownloadStatus();
     } catch {
-      Toast.error(t('toast.modelDownloadFailed'));
+      notify.error(t('toast.modelDownloadFailed'));
     }
   }, [refreshModelDownloadStatus, t]);
 
   const startUpscaleModelDownload = useCallback(async (modelId: UpscaleModelId, force: boolean) => {
     // 启动 AI 放大模型下载，并立即切换到 polling。
     try {
-      const response = await pywebviewClient.startUpscaleModelDownload(modelId, force);
+      const response = await desktopClient.startUpscaleModelDownload(modelId, force);
       if (!response.success) {
-        Toast.error(response.error || t('toast.upscaleModelDownloadFailed'));
+        notify.error(response.error || t('toast.upscaleModelDownloadFailed'));
         return;
       }
 
@@ -1134,26 +1111,26 @@ export default function App() {
         error: '',
       }));
       setIsPollingUpscaleDownload(true);
-      Toast.info(t('toast.upscaleModelDownloadStart'));
+      notify.info(t('toast.upscaleModelDownloadStart'));
       await refreshUpscaleModelDownloadStatus();
     } catch {
-      Toast.error(t('toast.upscaleModelDownloadFailed'));
+      notify.error(t('toast.upscaleModelDownloadFailed'));
     }
   }, [refreshUpscaleModelDownloadStatus, t]);
 
   const cancelUpscaleModelDownload = useCallback(async () => {
     // 请求取消 AI 放大模型下载。
     try {
-      const response = await pywebviewClient.cancelUpscaleModelDownload();
+      const response = await desktopClient.cancelUpscaleModelDownload();
       if (!response.success) {
-        Toast.error(response.error || t('toast.upscaleModelDownloadFailed'));
+        notify.error(response.error || t('toast.upscaleModelDownloadFailed'));
         return;
       }
       setIsPollingUpscaleDownload(true);
-      Toast.info(t('toast.upscaleModelDownloadCancelRequested'));
+      notify.info(t('toast.upscaleModelDownloadCancelRequested'));
       await refreshUpscaleModelDownloadStatus();
     } catch {
-      Toast.error(t('toast.upscaleModelDownloadFailed'));
+      notify.error(t('toast.upscaleModelDownloadFailed'));
     }
   }, [refreshUpscaleModelDownloadStatus, t]);
 
@@ -1162,19 +1139,20 @@ export default function App() {
     if (!videoPath || process.isProcessing) return;
     const enabledSegments = segments.filter((seg) => seg.enabled !== false);
     if (enabledSegments.length <= 0) {
-      Toast.warning(t('toast.noSegments'));
+      resetProcess();
+      notify.warning(t('toast.noSegments'));
       setView('annotate');
       return;
     }
 
     try {
-      const saved = await pywebviewClient.saveAnnotations({
+      const saved = await desktopClient.saveAnnotations({
         video_path: videoPath,
         segments,
         video_meta: videoMeta ?? EMPTY_META,
       });
       if (!saved.success) {
-        Toast.error(saved.error ?? t('toast.saveAnnotationsFailed'));
+        notify.error(saved.error ?? t('toast.saveAnnotationsFailed'));
         return;
       }
 
@@ -1191,7 +1169,7 @@ export default function App() {
         opaqueInfer: false,
       });
 
-      const processingResult = await pywebviewClient.processVideo({
+      const processingResult = await desktopClient.processVideo({
         input_path: videoPath,
         output_path: settings.outputPath,
         annotation_segments: enabledSegments,
@@ -1204,23 +1182,23 @@ export default function App() {
         throw new Error(processingResult.error || t('toast.processFailed'));
       }
       if (processingResult.model_warning) {
-        Toast.warning(processingResult.model_warning);
+        notify.warning(processingResult.model_warning);
       }
 
-      const mediaInfo = await pywebviewClient.getMediaInfo(processingResult.output_path);
+      const mediaInfo = await desktopClient.getMediaInfo(processingResult.output_path);
       let resultPlaybackPath = processingResult.output_path;
 
       if (mediaInfo.type === 'video') {
         // 结果视频优先准备一个更稳的预览版本（可能是转码缓存）。
         try {
-          const preparedPreview = await pywebviewClient.prepareVideoPreview(processingResult.output_path);
+          const preparedPreview = await desktopClient.prepareVideoPreview(processingResult.output_path);
           if (preparedPreview.success && preparedPreview.path) {
             resultPlaybackPath = preparedPreview.path;
           } else if (preparedPreview.error) {
-            Toast.warning(preparedPreview.error);
+            notify.warning(preparedPreview.error);
           }
           if (preparedPreview.warning) {
-            Toast.warning(preparedPreview.warning);
+            notify.warning(preparedPreview.warning);
           }
         } catch {
           // Keep original output path as playback source when preview preparation fails.
@@ -1251,18 +1229,19 @@ export default function App() {
         opaqueInfer: false,
       });
       setView('result');
-      Toast.success(t('toast.processDone'));
+      notify.success(t('toast.processDone'));
     } catch (error) {
       updateProcess({
         isProcessing: false,
         statusMessage: t('status.failed'),
         opaqueInfer: false,
       });
-      Toast.error(`${t('toast.processFailed')}: ${(error as Error).message}`);
+      notify.error(`${t('toast.processFailed')}: ${(error as Error).message}`);
     }
   }, [
     clearUpscaleResult,
     process.isProcessing,
+    resetProcess,
     resetUpscaleTask,
     segments,
     settings.outputPath,
@@ -1278,35 +1257,35 @@ export default function App() {
   const stopProcessing = useCallback(async () => {
     // 主动停止后端处理，并把前端状态回到 idle。
     try {
-      await pywebviewClient.stopProcessing();
+      await desktopClient.stopProcessing();
       updateProcess({
         isProcessing: false,
         statusMessage: t('status.idle'),
         opaqueInfer: false,
       });
-      Toast.info(t('toast.processStopped'));
+      notify.info(t('toast.processStopped'));
     } catch {
-      Toast.error(t('toast.processFailed'));
+      notify.error(t('toast.processFailed'));
     }
   }, [t, updateProcess]);
 
   const openOutputDir = useCallback(async () => {
     // 调用系统文件管理器打开输出目录。
     try {
-      await pywebviewClient.openOutputDir();
+      await desktopClient.openOutputDir();
     } catch {
-      Toast.warning(t('toast.resultEmpty'));
+      notify.warning(t('toast.resultEmpty'));
     }
   }, [t]);
 
   const startUpscaleTask = useCallback(async () => {
     // 手动触发 AI 放大任务（独立于去水印主流程）。
     if (!result.outputPath) {
-      Toast.warning(t('toast.resultEmpty'));
+      notify.warning(t('toast.resultEmpty'));
       return;
     }
     if (!upscaleConfig.enabled) {
-      Toast.warning(t('upscale.enableHint'));
+      notify.warning(t('upscale.enableHint'));
       return;
     }
 
@@ -1316,7 +1295,7 @@ export default function App() {
       const localizedReason = selectedEngineCapability.reason
         ? localizeSeedVRError(selectedEngineCapability.reason, t)
         : t('upscale.engineUnavailableHint');
-      Toast.warning(localizedReason);
+      notify.warning(localizedReason);
       return;
     }
     const selectedModel: UpscaleModelId = upscaleConfig.modelId;
@@ -1326,11 +1305,11 @@ export default function App() {
       ?? false
     );
     if (!selectedModelInstalled) {
-      Toast.warning(t('upscale.modelNotReadyHint'));
+      notify.warning(t('upscale.modelNotReadyHint'));
       return;
     }
     if (upscaleDownloadTask.state === 'running') {
-      Toast.warning(t('upscale.modelDownloading'));
+      notify.warning(t('upscale.modelDownloading'));
       return;
     }
 
@@ -1363,7 +1342,7 @@ export default function App() {
     };
 
     try {
-      const response = await pywebviewClient.startUpscale(payload);
+      const response = await desktopClient.startUpscale(payload);
       if (!response.success) {
         const errorText = localizeSeedVRError(response.error || t('upscale.status.failed'), t);
         updateUpscaleTask({
@@ -1371,11 +1350,11 @@ export default function App() {
           message: t('upscale.status.failed'),
           error: errorText,
         });
-        Toast.error(errorText);
+        notify.error(errorText);
         return;
       }
       setIsPollingUpscaleTask(true);
-      Toast.info(t('upscale.startRequested'));
+      notify.info(t('upscale.startRequested'));
       await refreshUpscaleTaskStatus();
     } catch {
       updateUpscaleTask({
@@ -1383,7 +1362,7 @@ export default function App() {
         message: t('upscale.status.failed'),
         error: t('upscale.status.failed'),
       });
-      Toast.error(t('upscale.status.failed'));
+      notify.error(t('upscale.status.failed'));
     }
   }, [
     clearUpscaleResult,
@@ -1410,16 +1389,16 @@ export default function App() {
   const cancelUpscaleTask = useCallback(async () => {
     // 请求取消当前运行中的 AI 放大任务。
     try {
-      const response = await pywebviewClient.cancelUpscaleTask();
+      const response = await desktopClient.cancelUpscaleTask();
       if (!response.success) {
-        Toast.error(response.error || t('upscale.cancelFailed'));
+        notify.error(response.error || t('upscale.cancelFailed'));
         return;
       }
       setIsPollingUpscaleTask(true);
-      Toast.info(t('upscale.cancelRequested'));
+      notify.info(t('upscale.cancelRequested'));
       await refreshUpscaleTaskStatus();
     } catch {
-      Toast.error(t('upscale.cancelFailed'));
+      notify.error(t('upscale.cancelFailed'));
     }
   }, [refreshUpscaleTaskStatus, t]);
 
@@ -1427,7 +1406,7 @@ export default function App() {
     // 保存设置：失败时回滚到上一次已持久化值。
     setIsSavingSettings(true);
     try {
-      const response = await pywebviewClient.saveSettings({
+      const response = await desktopClient.saveSettings({
         language: settings.language,
         theme: settings.theme,
         output: {
@@ -1437,14 +1416,14 @@ export default function App() {
       });
       if (!response.success) {
         rollbackSettings();
-        Toast.error(t('toast.saveSettingsFailed'));
+        notify.error(t('toast.saveSettingsFailed'));
         return;
       }
       commitSettings();
-      Toast.success(t('toast.saveSettingsSuccess'));
+      notify.success(t('toast.saveSettingsSuccess'));
     } catch {
       rollbackSettings();
-      Toast.error(t('toast.saveSettingsFailed'));
+      notify.error(t('toast.saveSettingsFailed'));
     } finally {
       setIsSavingSettings(false);
     }
@@ -1518,6 +1497,7 @@ export default function App() {
     return (
       <ProcessView
         videoPath={videoPath}
+        videoUrl={sourceVideoUrl}
         videoMeta={videoMeta}
         frameImageUrl={frameImageUrl}
         previewFrameWidth={processPreviewFrameWidth}
@@ -1543,7 +1523,6 @@ export default function App() {
             setCurrentFrame(0);
           }
           setIsProcessPlaying(true);
-          void ensurePreviewSession(videoPath, videoMeta?.fps);
         }}
         onSelectOutputFolder={selectOutputFolder}
         onChangeModelId={(modelId) => updateSettings({ modelId })}
@@ -1555,94 +1534,105 @@ export default function App() {
   };
 
   return (
-    // 顶部导航 + 主内容 + 右侧说明书/设置面板。
-    <ConfigProvider locale={semiLocale}>
-      <Layout className="app-shell">
-        <Header className="top-nav-header">
-          <div className="top-nav-left">
-            <Title heading={5} style={{ margin: 0 }}>{t('app.title')}</Title>
-            <div className="top-nav-flow">
-              {NAV_ITEMS.map((item, index) => (
-                <div className="top-nav-step" key={item.key}>
-                  <Button
-                    className="top-nav-tab-btn"
-                    theme={view === item.key ? 'solid' : 'light'}
-                    onClick={() => setView(item.key)}
-                  >
-                    {t(item.labelKey)}
-                  </Button>
-                  {index < NAV_ITEMS.length - 1 ? (
-                    <span
-                      aria-hidden="true"
-                      className={`top-nav-step-arrow${
-                        index === currentNavIndex && currentNavIndex < NAV_ITEMS.length - 1
-                          ? ' is-active'
-                          : ''
-                      }`}
-                    />
-                  ) : null}
-                </div>
-              ))}
-            </div>
+    <div className={`app-shell ${isMacTitlebar ? 'is-macos-titlebar' : ''}`}>
+      <aside className="app-nav-rail" aria-label={t('app.title')}>
+        <div className="app-brand-mark" aria-hidden="true">
+          <MaterialIcon name="auto_fix_high" />
+        </div>
+        <nav className="app-nav-destinations">
+          {NAV_ITEMS.map((item) => {
+            const selected = view === item.key;
+            return (
+              <button
+                key={item.key}
+                type="button"
+                className={`app-nav-destination ${selected ? 'is-selected' : ''}`}
+                aria-current={selected ? 'page' : undefined}
+                onClick={() => setView(item.key)}
+              >
+                <span className="app-nav-indicator">
+                  <MaterialIcon name={item.icon} />
+                </span>
+                <span className="app-nav-label">{t(item.labelKey)}</span>
+              </button>
+            );
+          })}
+        </nav>
+      </aside>
+
+      <div className="app-content-frame">
+        <header className="app-top-bar">
+          <div className="app-title-block">
+            <span className="app-window-title">{t('app.title')}</span>
           </div>
-          <div className="top-nav-actions">
-            <Button
-              icon={<IconBulb />}
-              theme={isManualPanelOpen ? 'solid' : 'borderless'}
+          <div className="app-top-actions">
+            <MdIconButton
+              icon="help"
+              label={t('nav.manual')}
+              selected={isManualPanelOpen}
               onClick={toggleManualPanel}
-              aria-label={t('nav.manual')}
             />
-            <Button
-              icon={<IconSetting />}
-              theme={isSettingsPanelOpen ? 'solid' : 'borderless'}
+            <MdIconButton
+              icon="settings"
+              label={t('nav.settings')}
+              selected={isSettingsPanelOpen}
               onClick={toggleSettingsPanel}
-              aria-label={t('nav.settings')}
             />
           </div>
-        </Header>
-        <Content className="app-main-content">{renderView()}</Content>
-        <SideSheet
-          className="manual-sidesheet"
-          title={t('manual.title')}
-          visible={isManualPanelOpen}
-          placement="right"
-          mask
-          maskClosable
-          closeOnEsc
-          width="clamp(320px, 40vw, 680px)"
-          bodyStyle={{ padding: 0 }}
-          onCancel={() => setIsManualPanelOpen(false)}
-        >
-          <ManualView />
-        </SideSheet>
-        <SideSheet
-          className="settings-sidesheet"
-          title={t('settings.title')}
-          visible={isSettingsPanelOpen}
-          placement="right"
-          mask
-          maskClosable
-          closeOnEsc
-          width="clamp(320px, 30vw, 460px)"
-          bodyStyle={{ padding: 0 }}
-          onCancel={() => setIsSettingsPanelOpen(false)}
-        >
-          <SettingsView
-            settings={settings}
-            saving={isSavingSettings}
-            modelDownloads={modelDownloads}
-            downloadTask={downloadTask}
-            onChangeLanguage={(value) => updateSettings({ language: value })}
-            onChangeTheme={(value) => updateSettings({ theme: value })}
-            onChangeOutputPath={(value) => updateSettings({ outputPath: value })}
-            onSelectOutputFolder={selectOutputFolder}
-            onStartModelDownload={startModelDownload}
-            onCancelModelDownload={cancelModelDownload}
-            onSave={saveSettings}
-            onReset={rollbackSettings}
-          />
-        </SideSheet>
-      </Layout>
-    </ConfigProvider>
+        </header>
+        <main className="app-main-content">{renderView()}</main>
+      </div>
+
+      {isManualPanelOpen ? (
+        <div className="md-modal-layer" role="presentation" onMouseDown={() => setIsManualPanelOpen(false)}>
+          <section
+            className="md-side-dialog manual-sidesheet"
+            role="dialog"
+            aria-modal="true"
+            aria-label={t('manual.title')}
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <header className="md-side-dialog-header">
+              <h2>{t('manual.title')}</h2>
+              <MdIconButton icon="close" label={t('common.close')} onClick={() => setIsManualPanelOpen(false)} />
+            </header>
+            <ManualView />
+          </section>
+        </div>
+      ) : null}
+
+      {isSettingsPanelOpen ? (
+        <div className="md-modal-layer" role="presentation" onMouseDown={() => setIsSettingsPanelOpen(false)}>
+          <section
+            className="md-side-dialog settings-sidesheet"
+            role="dialog"
+            aria-modal="true"
+            aria-label={t('settings.title')}
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <header className="md-side-dialog-header">
+              <h2>{t('settings.title')}</h2>
+              <MdIconButton icon="close" label={t('common.close')} onClick={() => setIsSettingsPanelOpen(false)} />
+            </header>
+            <SettingsView
+              settings={settings}
+              saving={isSavingSettings}
+              modelDownloads={modelDownloads}
+              downloadTask={downloadTask}
+              onChangeLanguage={(value) => updateSettings({ language: value })}
+              onChangeTheme={(value) => updateSettings({ theme: value })}
+              onChangeOutputPath={(value) => updateSettings({ outputPath: value })}
+              onSelectOutputFolder={selectOutputFolder}
+              onStartModelDownload={startModelDownload}
+              onCancelModelDownload={cancelModelDownload}
+              onSave={saveSettings}
+              onReset={rollbackSettings}
+            />
+          </section>
+        </div>
+      ) : null}
+
+      <SnackbarHost />
+    </div>
   );
 }

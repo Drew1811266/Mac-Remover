@@ -27,7 +27,12 @@ export interface WorkspaceState {
   updateSegment: (id: string, patch: Partial<AnnotationSegment>) => void;
   removeSegment: (id: string) => void;
   clearSegments: () => void;
-  createSegmentFromRect: (rect: AnnotationRect, frame: number) => void;
+  createSegmentFromRect: (rect: AnnotationRect, frame: number, options?: CreateSegmentOptions) => void;
+}
+
+export interface CreateSegmentOptions {
+  fps?: number;
+  frameMax?: number;
 }
 
 function nowIso(): string {
@@ -35,14 +40,24 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
-function createSegment(rect: AnnotationRect, frame: number): AnnotationSegment {
-  // 从“当前帧拖拽矩形”创建一个默认标记段。
+function clampFrame(value: number, frameMax?: number): number {
+  const numeric = Number(value);
+  const safeFrame = Number.isFinite(numeric) ? Math.max(0, Math.round(numeric)) : 0;
+  if (typeof frameMax !== 'number' || !Number.isFinite(frameMax)) return safeFrame;
+  return Math.min(Math.max(0, Math.round(frameMax)), safeFrame);
+}
+
+function createSegment(rect: AnnotationRect, frame: number, options?: CreateSegmentOptions): AnnotationSegment {
+  // 旧版行为：新增标记段默认从当前帧开始，覆盖约 2 秒。
   const now = nowIso();
-  const start = Math.max(0, Math.round(frame));
+  const start = clampFrame(frame, options?.frameMax);
+  const fps = Math.max(1, Number(options?.fps) || 24);
+  const defaultSpan = Math.max(1, Math.round(fps * 2));
+  const end = clampFrame(start + defaultSpan, options?.frameMax);
   return {
     id: `seg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     start_frame: start,
-    end_frame: start,
+    end_frame: Math.max(start, end),
     rect,
     expand_px: 5,
     feather_px: 3,
@@ -50,6 +65,15 @@ function createSegment(rect: AnnotationRect, frame: number): AnnotationSegment {
     created_at: now,
     updated_at: now,
   };
+}
+
+export function resolveVisibleStageSegments(
+  segments: AnnotationSegment[],
+  currentFrame: number,
+): AnnotationSegment[] {
+  return segments.filter((segment) =>
+    segment.enabled !== false && segment.start_frame <= currentFrame && currentFrame <= segment.end_frame,
+  );
 }
 
 // 打标工作区状态仓库：
@@ -108,9 +132,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
 
   clearSegments: () => set({ segments: [], selectedId: null }),
 
-  createSegmentFromRect: (rect, frame) =>
+  createSegmentFromRect: (rect, frame, options) =>
     set((state) => {
-      const segment = createSegment(rect, frame);
+      const segment = createSegment(rect, frame, options);
       return {
         segments: [...state.segments, segment],
         selectedId: segment.id,

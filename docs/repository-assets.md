@@ -27,8 +27,6 @@
   - 仓库保留 `seedvr2_ema_3b-Q4_K_M.gguf` 作为默认离线 GGUF 模型
 - `models/runtime/realesrgan-py312/`
   - Real-ESRGAN 离线运行时、权重和独立 Python 环境
-- `models/third_party/ProPainter/`
-  - 仍在主流程中使用的第三方源码与权重
 
 ## Removed / Not Tracked
 
@@ -44,6 +42,7 @@
 
 以下历史第三方目录已从主仓库清理：
 
+- `models/third_party/ProPainter/`
 - `models/third_party/STTN/`
 - `models/third_party/RealBasicVSR/`
 - `models/third_party/Real-ESRGAN/`

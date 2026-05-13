@@ -10,7 +10,20 @@ if [ ! -x "$FFMPEG_BIN" ]; then
 fi
 
 INPUT_FILE=""
+WANT_JSON=0
+SELECT_AUDIO=0
 for arg in "$@"; do
+  case "$arg" in
+    -version|--version)
+      exec "$FFMPEG_BIN" -version
+      ;;
+    json)
+      WANT_JSON=1
+      ;;
+    a:0)
+      SELECT_AUDIO=1
+      ;;
+  esac
   INPUT_FILE="$arg"
 done
 
@@ -18,7 +31,44 @@ if [ -z "$INPUT_FILE" ] || [ ! -f "$INPUT_FILE" ]; then
   exit 1
 fi
 
-PROBE_LOG="$($FFMPEG_BIN -hide_banner -i "$INPUT_FILE" -f null - 2>&1 || true)"
+PROBE_LOG="$("$FFMPEG_BIN" -hide_banner -i "$INPUT_FILE" -frames:v 1 -f null - 2>&1 || true)"
+
+if [ "$WANT_JSON" -eq 1 ]; then
+  if [ "$SELECT_AUDIO" -eq 1 ]; then
+    if printf '%s\n' "$PROBE_LOG" | grep -qi 'Audio:'; then
+      printf '{"streams":[{"codec_type":"audio"}]}\n'
+    else
+      printf '{"streams":[]}\n'
+    fi
+    exit 0
+  fi
+
+  VIDEO_LINE="$(printf '%s\n' "$PROBE_LOG" | grep -m 1 'Video:' || true)"
+  if [ -z "$VIDEO_LINE" ]; then
+    printf '{"streams":[]}\n'
+    exit 0
+  fi
+  DURATION_LINE="$(printf '%s\n' "$PROBE_LOG" | grep -m 1 'Duration:' || true)"
+  WIDTH_HEIGHT="$(printf '%s\n' "$VIDEO_LINE" | sed -n 's/.* \([0-9][0-9]*\)x\([0-9][0-9]*\)[, ].*/\1 \2/p' | head -n 1)"
+  WIDTH="$(printf '%s\n' "$WIDTH_HEIGHT" | awk '{print $1}')"
+  HEIGHT="$(printf '%s\n' "$WIDTH_HEIGHT" | awk '{print $2}')"
+  FPS="$(printf '%s\n' "$VIDEO_LINE" | sed -n 's/.* \([0-9][0-9.]*\) fps.*/\1/p' | head -n 1)"
+  if [ -z "$FPS" ]; then
+    FPS="$(printf '%s\n' "$VIDEO_LINE" | sed -n 's/.* \([0-9][0-9.]*\) tbr.*/\1/p' | head -n 1)"
+  fi
+  DURATION="$(printf '%s\n' "$DURATION_LINE" | sed -n 's/.*Duration: \([0-9][0-9]*\):\([0-9][0-9]*\):\([0-9][0-9.]*\).*/\1 \2 \3/p' | awk '{printf "%.6f", ($1 * 3600) + ($2 * 60) + $3}')"
+
+  WIDTH="${WIDTH:-0}"
+  HEIGHT="${HEIGHT:-0}"
+  FPS="${FPS:-0}"
+  DURATION="${DURATION:-0}"
+  NB_FRAMES="$(awk -v duration="$DURATION" -v fps="$FPS" 'BEGIN { frames = int((duration * fps) + 0.5); if (frames < 0) frames = 0; print frames }')"
+
+  printf '{"streams":[{"width":%s,"height":%s,"r_frame_rate":"%s/1","avg_frame_rate":"%s/1","nb_frames":"%s","duration":"%s"}]}\n' \
+    "$WIDTH" "$HEIGHT" "$FPS" "$FPS" "$NB_FRAMES" "$DURATION"
+  exit 0
+fi
+
 if printf '%s\n' "$PROBE_LOG" | grep -qi 'Audio:'; then
   printf 'audio\n'
 fi

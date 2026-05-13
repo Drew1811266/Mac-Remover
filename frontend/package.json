@@ -1,28 +1,97 @@
 {
   "name": "wmr-frontend",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
+  "description": "Desktop video watermark removal and enhancement workspace.",
+  "author": "Mac Watermark Remover",
+  "license": "UNLICENSED",
   "type": "module",
+  "main": "dist-electron/electron/main.js",
   "scripts": {
     "dev": "vite",
+    "electron:build": "tsc -p tsconfig.electron.json",
+    "electron:dev": "npm run build && npm run electron:build && node scripts/run-electron-dev.mjs",
+    "electron:pack": "npm run build && npm run electron:build && electron-builder",
+    "electron:verify-release": "node scripts/assert-python-free-release.mjs release",
+    "electron:verify-macos-signing": "node scripts/verify-macos-release-signing.mjs release",
+    "functional:fixtures": "node scripts/create-functional-fixtures.mjs",
+    "functional:smoke": "npm run electron:build && node scripts/functional-smoke.mjs",
+    "functional:ui": "npm run build && npm run electron:build && node scripts/electron-ui-smoke.mjs",
+    "functional:test": "npm run typecheck && npm run build && npm test && npm run electron:build && node scripts/functional-smoke.mjs && node scripts/electron-ui-smoke.mjs",
+    "native:configure": "cmake -S native/wmr_native -B native/wmr_native/build -G Ninja",
+    "native:build": "cmake --build native/wmr_native/build --config Release",
     "build": "npm run typecheck && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.electron.json"
   },
   "dependencies": {
-    "@douyinfe/semi-icons": "^2.82.0",
-    "@douyinfe/semi-ui": "^2.82.0",
+    "@material/web": "^2.4.1",
     "dayjs": "^1.11.13",
+    "material-symbols": "^0.44.5",
+    "onnxruntime-node": "^1.25.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "sharp": "^0.34.5",
     "zustand": "^4.5.5"
   },
   "devDependencies": {
     "@types/node": "^22.19.13",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
-    "@vitejs/plugin-react": "^4.3.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "electron": "^42.0.0",
+    "electron-builder": "^26.8.1",
     "typescript": "^5.6.3",
-    "vite": "^5.4.10"
+    "vite": "^8.0.11",
+    "vitest": "^4.1.5"
+  },
+  "build": {
+    "appId": "com.macwatermarkremover.app",
+    "productName": "Mac Watermark Remover",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist-electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../src/gui/templates/dist",
+        "to": "renderer"
+      },
+      {
+        "from": "../vendor/ffmpeg",
+        "to": "vendor/ffmpeg",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "native/prebuilds",
+        "to": "native/prebuilds",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.video",
+      "icon": "build/icon.icns",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.inherit.plist",
+      "notarize": true
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    }
   }
 }

@@ -13,9 +13,9 @@ Current platform key format is `<system>-<arch>`, for example:
 ## Bundled Files
 
 - `darwin-arm64/ffmpeg`: copied from `imageio-ffmpeg` wheel in this development environment
-- `darwin-arm64/ffprobe`: local shim script using embedded `ffmpeg` stream inspection
+- `darwin-arm64/ffprobe`: local shim script using embedded `ffmpeg` stream inspection; supports the JSON metadata queries used by the Electron services
 - `darwin-x86_64/ffmpeg`: embedded Intel binary (extracted from local offline archive)
-- `darwin-x86_64/ffprobe`: local shim script using sibling embedded `ffmpeg` stream inspection (no PATH dependency)
+- `darwin-x86_64/ffprobe`: local shim script using sibling embedded `ffmpeg` stream inspection (no PATH dependency); supports the JSON metadata queries used by the Electron services
 
 ## Intel Offline Embedding
 

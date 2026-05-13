@@ -2,7 +2,7 @@
 模型下载与部署服务。
 
 核心目标：
-- 支持按模型（LaMa/ProPainter）下载；
+- 支持 LaMa 模型下载；
 - 支持进度回调与中途取消；
 - 通过“临时目录 + 原子替换”避免半下载状态污染正式目录。
 """
@@ -26,22 +26,10 @@ from typing import Any, Callable, Dict, List, Optional
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 MODELS_DIR = PROJECT_ROOT / "models"
-THIRD_PARTY_DIR = MODELS_DIR / "third_party"
-
 LAMA_DIR = MODELS_DIR / "big-lama"
 LAMA_ZIP_URL = "https://huggingface.co/smartywu/big-lama/resolve/main/big-lama.zip"
 
-PROPAINTER_DIR = THIRD_PARTY_DIR / "ProPainter"
-PROPAINTER_SCRIPT = PROPAINTER_DIR / "inference_propainter.py"
-PROPAINTER_WEIGHTS_DIR = PROPAINTER_DIR / "weights"
-PROPAINTER_WEIGHT_URLS: Dict[str, str] = {
-    "raft-things.pth": "https://github.com/sczhou/ProPainter/releases/download/v0.1.0/raft-things.pth",
-    "recurrent_flow_completion.pth": "https://github.com/sczhou/ProPainter/releases/download/v0.1.0/recurrent_flow_completion.pth",
-    "ProPainter.pth": "https://github.com/sczhou/ProPainter/releases/download/v0.1.0/ProPainter.pth",
-}
-PROPAINTER_ARCHIVE_URL = "https://codeload.github.com/sczhou/ProPainter/tar.gz/refs/heads/main"
-
-DOWNLOADABLE_MODEL_IDS = ("lama_roi", "propainter_roi")
+DOWNLOADABLE_MODEL_IDS = ("lama_roi",)
 UNKNOWN_SIZE_FALLBACK_BYTES = 512 * 1024 * 1024
 CHUNK_SIZE = 512 * 1024
 HTTP_TIMEOUT_SECONDS = 45
@@ -74,28 +62,14 @@ def _lama_installed() -> bool:
         return False
 
 
-def _propainter_installed() -> bool:
-    """判断 ProPainter 资源是否就绪（脚本 + 全部权重）。"""
-    if not PROPAINTER_SCRIPT.exists():
-        return False
-    for name in PROPAINTER_WEIGHT_URLS:
-        if not (PROPAINTER_WEIGHTS_DIR / name).exists():
-            return False
-    return True
-
-
 def _model_display_name(model_id: str) -> str:
     """模型 ID -> 人类可读名称。"""
-    if model_id == "lama_roi":
-        return "LaMa-ROI"
-    return "ProPainter-ROI"
+    return "LaMa-ROI"
 
 
 def _model_install_hint(model_id: str) -> str:
     """模型安装提示文案。"""
-    if model_id == "lama_roi":
-        return "基础单帧修复模型。"
-    return "高质量时序修复模型（含源码与多权重）。"
+    return "基础单帧修复模型。"
 
 
 def is_model_installed(model_id: str) -> bool:
@@ -103,8 +77,6 @@ def is_model_installed(model_id: str) -> bool:
     normalized = str(model_id or "").strip().lower()
     if normalized == "lama_roi":
         return _lama_installed()
-    if normalized == "propainter_roi":
-        return _propainter_installed()
     return False
 
 
@@ -466,27 +438,6 @@ def _deploy_lama(stage_file: Path, staging_root: Path) -> None:
     )
 
 
-def _deploy_propainter_repo(stage_file: Path, staging_root: Path) -> None:
-    """部署 ProPainter 源码包。"""
-    _deploy_archive_directory(
-        stage_file,
-        staging_root,
-        PROPAINTER_DIR,
-        archive_kind="tar.gz",
-        required_file="inference_propainter.py",
-    )
-
-
-def _deploy_propainter_weight_factory(filename: str) -> Callable[[Path, Path], None]:
-    """按权重文件名生成对应部署函数。"""
-    target = PROPAINTER_WEIGHTS_DIR / filename
-
-    def _deploy(stage_file: Path, _staging_root: Path) -> None:
-        _replace_file_atomically(stage_file, target)
-
-    return _deploy
-
-
 def _build_download_plan(model_id: str, force: bool) -> List[DownloadItem]:
     """根据模型 ID 与 force 选项生成下载计划。"""
     model_id = str(model_id or "").strip().lower()
@@ -508,32 +459,6 @@ def _build_download_plan(model_id: str, force: bool) -> List[DownloadItem]:
                 )
             )
         return items
-
-    if force or not PROPAINTER_SCRIPT.exists():
-        items.append(
-            DownloadItem(
-                key="propainter_repo",
-                display_name="ProPainter source",
-                source_type="http",
-                source=PROPAINTER_ARCHIVE_URL,
-                stage_filename="propainter_repo.tar.gz",
-                deploy=_deploy_propainter_repo,
-            )
-        )
-
-    for filename, url in PROPAINTER_WEIGHT_URLS.items():
-        target_file = PROPAINTER_WEIGHTS_DIR / filename
-        if force or not target_file.exists():
-            items.append(
-                DownloadItem(
-                    key=f"propainter_weight_{filename}",
-                    display_name=f"ProPainter weight: {filename}",
-                    source_type="http",
-                    source=url,
-                    stage_filename=filename,
-                    deploy=_deploy_propainter_weight_factory(filename),
-                )
-            )
 
     return items
 

@@ -1,0 +1,4 @@
+-r requirements.txt
+
+# Test runner for the legacy Python regression suite under tests/.
+pytest>=8.0.0

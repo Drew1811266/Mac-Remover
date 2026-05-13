@@ -120,7 +120,7 @@ class ConfigManager:
                     if model_id == 'sttn_roi':
                         model_id = 'lama_roi'
 
-                    if model_id not in {'lama_roi', 'propainter_roi'}:
+                    if model_id not in {'lama_roi'}:
                         # 兜底：未知模型统一回到默认模型。
                         model_id = 'lama_roi'
 

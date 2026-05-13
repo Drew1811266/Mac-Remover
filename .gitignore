@@ -7,6 +7,7 @@ Thumbs.db
 # Local agent / tool state
 .omx/
 .trae/
+.playwright-mcp/
 
 # Python caches and local envs
 __pycache__/
@@ -40,6 +41,10 @@ models/runtime/seedvr-py312/models/SEEDVR2/seedvr2_ema_3b-Q8_0.gguf
 tmp/
 temp/
 *.tmp
+frontend/dist-electron/
+frontend/release/
+frontend/.functional-test/
+frontend/native/wmr_native/build/
 
 # Environment files
 .env
