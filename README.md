@@ -2,6 +2,8 @@
 
 Mac/Windows 桌面端视频去水印工具。当前产品路径正在切换为 Electron + React + TypeScript + Node 本地服务，发布包不再依赖 Python/pywebview。
 
+![Mac Watermark Remover interface](docs/assets/mac-watermark-remover-screenshot.png)
+
 ## Repository Shape
 
 - Electron 主进程、preload、本地服务位于 `frontend/electron/`
